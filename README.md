@@ -1,2 +1,3 @@
-# go-to-coq
-Translation from Go to Coq
+# coq-of-coq
+
+> Translation from Go to Coq
