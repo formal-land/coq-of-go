@@ -65,6 +65,7 @@ Definition wordSize : GoValue :=
 Module GlobalName.
   Inductive t : Set :=
   | _Kind_index : t
+  | emptyString : t
   | floatVal0 : t
   | init_dollar_guard : t
   .
@@ -72,6 +73,9 @@ End GlobalName.
 
 Definition _Kind_index : M GoValue :=
   M.global GlobalName._Kind_index.
+
+Definition emptyString : M GoValue :=
+  M.global GlobalName.emptyString.
 
 Definition floatVal0 : M GoValue :=
   M.global GlobalName.floatVal0.
@@ -1786,11 +1790,19 @@ Definition MakeInt64 x : FunctionBody.t := [
 
 Definition MakeString s : FunctionBody.t := [
   (0, [
-    t0 := new stringVal (complit);
-    t1 := &t0.s [#1];
-    *t1 = s;
-    t2 := make Value <- *stringVal (t0);
-    return t2
+    t0 := s == "":string;
+    if t0 goto 1 else 2
+  ]);
+  (1, [
+    t1 := make Value <- *stringVal (emptyString);
+    return t1
+  ]);
+  (2, [
+    t2 := new stringVal (complit);
+    t3 := &t2.s [#1];
+    *t3 = s;
+    t4 := make Value <- *stringVal (t2);
+    return t4
   ])
 ].
 

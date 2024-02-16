@@ -3,5 +3,5 @@
 > Translation from Go to Coq
 
 ```sh
-go run main.go go/constant
+go run main.go go/constant >coq_translation/Constant.v
 ```
