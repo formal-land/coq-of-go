@@ -1,0 +1,30 @@
+name: Go
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: "1.21"
+
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Get dependencies
+        run: go get -v .
+
+      - name: Generate .v file
+        run: go run main.go go/constant >coq_translation/Constant.v
+
+      - name: Check that the diff is empty
+        run: git -c color.ui=always diff --exit-code
