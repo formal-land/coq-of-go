@@ -13,27 +13,95 @@ import (
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
+const coqHeader = `Require Import Coq.ZArith.ZArith.
+Require Import Coq.Strings.String.
+
+Local Open Scope Z_scope.
+
+Parameter float : Set.
+
+Module GoValue.
+  Inductive t : Set :=
+  | bool : bool -> t
+  | int : Z -> t
+  | float : float -> t
+  | complex : float -> float -> t
+  | string : string -> t
+  .
+End GoValue.
+Definition GoValue : Set := GoValue.t.
+
+Parameter M : Set -> Set.
+
+Module M.
+	Parameter global : GlobalName.t -> M GoValue.
+End M.
+
+`
+
+// TODO: this function should be injective
+func escapeName(name string) string {
+	var buffer bytes.Buffer
+	for _, c := range name {
+		if c == '$' {
+			buffer.WriteString("_dollar_")
+		} else {
+			buffer.WriteRune(c)
+		}
+	}
+	return buffer.String()
+}
+
 func constToCoq(c *ssa.Const) string {
 	switch c.Value.Kind() {
 	case constant.Bool:
 		if constant.BoolVal(c.Value) {
-			return "true"
+			return "GoValue.bool true"
 		} else {
-			return "false"
+			return "GoValue.bool false"
 		}
 	case constant.Int:
-		return c.Value.ExactString()
+		return fmt.Sprintf("GoValue.int %v", c.Value.ExactString())
 	case constant.Float:
-		return c.Value.ExactString()
+		return fmt.Sprintf("GoValue.float %v", c.Value.ExactString())
 	case constant.Complex:
-		return c.Value.ExactString()
+		return fmt.Sprintf("GoValue.complex %v", c.Value.ExactString())
 	case constant.String:
-		return c.Value.ExactString()
+		return fmt.Sprintf("GoValue.string %v", c.Value.ExactString())
 	case constant.Unknown:
 		fallthrough
 	default:
 		return "unknown"
 	}
+}
+
+func namedConstToCoq(c *ssa.NamedConst) string {
+	var buffer bytes.Buffer
+
+	buffer.WriteString("Definition ")
+	buffer.WriteString(c.Name())
+	buffer.WriteString(" : GoValue :=\n")
+
+	buffer.WriteString("  ")
+	buffer.WriteString(constToCoq(c.Value))
+	buffer.WriteString(".\n")
+
+	return buffer.String()
+}
+
+func globalToCoq(global *ssa.Global) string {
+	var buffer bytes.Buffer
+
+	buffer.WriteString("Definition ")
+	buffer.WriteString(escapeName(global.Name()))
+	buffer.WriteString(" : M GoValue :=\n")
+
+	buffer.WriteString("  ")
+	buffer.WriteString("M.global GlobalName.")
+	buffer.WriteString(escapeName(global.Name()))
+	buffer.WriteString(".\n")
+
+	return buffer.String()
 }
 
 func functionToCoq(f *ssa.Function) string {
@@ -127,25 +195,35 @@ func main() {
 	sort.Strings(globalNames)
 	sort.Strings(typeNames)
 
+	fmt.Print(coqHeader)
+
 	fmt.Print("(** ** Constants *)\n\n")
 	for _, constantName := range constantNames {
 		constant := members[constantName].(*ssa.NamedConst)
-		fmt.Println("(*", constant.Type(), "*)")
-		fmt.Println("Definition", constant.Name(), ":=", constToCoq(constant.Value), ".")
-		fmt.Println()
+		fmt.Println(namedConstToCoq(constant))
 	}
 
 	fmt.Print("(** ** Globals *)\n\n")
+
+	// Create the inductive of global names
+	fmt.Println("Module GlobalName.")
+	fmt.Println("  Inductive t : Set :=")
+	for _, globalName := range globalNames {
+		fmt.Println("  |", escapeName(globalName), ": t")
+	}
+	fmt.Println("  .")
+	fmt.Println("End GlobalName.")
+	fmt.Println()
+
 	for _, globalName := range globalNames {
 		global := members[globalName].(*ssa.Global)
-		fmt.Println("Global:", global.Name(), global.Type())
-		fmt.Println()
+		fmt.Println(globalToCoq(global))
 	}
 
 	fmt.Print("(** ** Functions *)\n\n")
 	for _, functionName := range functionNames {
 		function := members[functionName].(*ssa.Function)
-		fmt.Print(functionToCoq(function))
+		fmt.Println(functionToCoq(function))
 	}
 
 	fmt.Print("(** ** Types *)\n\n")

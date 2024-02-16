@@ -1,4 +1,4 @@
-module github.com/clarus/go-to-coq
+module github.com/formal-land/coq-of-go-experiment
 
 go 1.21
 
