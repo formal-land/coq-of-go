@@ -24,7 +24,9 @@ jobs:
         run: go get -v .
 
       - name: Generate .v file
-        run: go run main.go go/constant >coq_translation/go/constant.v
+        run: |
+          go run main.go go/constant >coq_translation/go/constant.v
+          go run main.go ./hello_world >coq_translation/hello_world.v
 
       - name: Check that the diff is empty
         run: git -c color.ui=always diff --exit-code
