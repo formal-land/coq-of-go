@@ -25,18 +25,22 @@ Module Val.
 End Val.
 
 Module M.
-  Inductive t (A : Set) : Set :=
+  CoInductive t (A : Set) : Set :=
   | Return (_ : A)
-  | Bind {B : Set} (_ : t B) (_ : B -> t A).
+  | Bind {B : Set} (_ : t B) (_ : B -> t A)
+	| Thunk (_ : t A)
+	| EvalBody (_ : list (Z * t A)).
   Arguments Return {A}.
   Arguments Bind {A B}.
+  Arguments Thunk {A}.
+  Arguments EvalBody {A}.
 End M.
 Definition M : Set -> Set := M.t.
 
 Module Register.
   Parameter read : string -> Val.t.
 
-  Parameter write : string -> M Val.t -> M (list Val.t) -> M (list Val.t).
+  Parameter write : string -> Val.t -> M unit.
 End Register.
 
 (* Notation "'let*' a := b 'in' c" :=
@@ -44,12 +48,15 @@ End Register.
   (at level 200, b at level 100, a name). *)
 
 Notation "'let*' a := b 'in' c" :=
-  (Register.write a b c)
+  (M.Bind b (fun v_b => M.Bind (Register.write a v_b) (fun '_ => c)))
+  (at level 200).
+
+Notation "'do*' b 'in' c" :=
+  (M.Bind b (fun '_ => c))
   (at level 200).
 
 Module Function.
-  CoInductive t : Set :=
-  | Body (_ : Val.t -> list (Z * M (list Val.t))).
+  Definition t : Set := list Val.t -> M (list Val.t).
 End Function.
 
 Module Alloc.
@@ -60,8 +67,8 @@ End Alloc.
 
 Module CallKind.
   Inductive t : Set :=
-  | Function (_ : Function.t)
-  | Method (_ : Val.t) (_ : string).
+  | Function (_ : M (list Val.t))
+  | Method (_ : Val.t) (_ : string) (_ : list Val.t).
 End CallKind.
 
 Module TypeAssert.
@@ -75,7 +82,7 @@ Module Instr.
 
   Parameter BinOp : Val.t -> string -> Val.t -> M Val.t.
 
-  Parameter Call : CallKind.t -> list Val.t -> M Val.t.
+  Parameter Call : CallKind.t -> M Val.t.
 
   Parameter ChangeInterface : Val.t -> M Val.t.
 
@@ -179,6 +186,8 @@ Module unicode.
     Parameter init : Function.t.
   End utf8.
 End unicode.
+
+Local Unset Guard Checking.
 (** ** Constants *)
 
 Definition Bool : Val.t :=
@@ -244,12 +253,12 @@ Definition init_'dollarguard : M Val.t :=
 
 (** ** Functions *)
 
-CoFixpoint BinaryOp : Function.t :=
-  Function.Body (fun α =>
+CoFixpoint BinaryOp (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x_; op; y_] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function _'match) [x_; y_] in
+  | [x_; op; y_] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (_'match [x_; y_])) in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
       let* "t3" := Instr.TypeAssert (Register.read "t1") TypeAssert.CommaOk "go/constant.unknownVal" in
@@ -324,11 +333,11 @@ CoFixpoint BinaryOp : Function.t :=
       M.Return [(Register.read "t29")]
     );
     (15,
-      let* "t30" := Instr.Call (CallKind.Function is63bit) [(Register.read "t20")] in
+      let* "t30" := Instr.Call (CallKind.Function (is63bit [(Register.read "t20")])) in
       Instr.If (Register.read "t30") 20 18
     );
     (16,
-      let* "t31" := Instr.Call (CallKind.Function is63bit) [(Register.read "t20")] in
+      let* "t31" := Instr.Call (CallKind.Function (is63bit [(Register.read "t20")])) in
       Instr.If (Register.read "t31") 25 23
     );
     (17,
@@ -336,11 +345,11 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t32") 16 22
     );
     (18,
-      let* "t33" := Instr.Call (CallKind.Function newInt) [] in
-      let* "t34" := Instr.Call (CallKind.Function math.big.NewInt) [(Register.read "t20")] in
-      let* "t35" := Instr.Call (CallKind.Function math.big.NewInt) [(Register.read "t22")] in
-      let* "t36" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t33"); (Register.read "t34"); (Register.read "t35")] in
-      let* "t37" := Instr.Call (CallKind.Function makeInt) [(Register.read "t36")] in
+      let* "t33" := Instr.Call (CallKind.Function (newInt [])) in
+      let* "t34" := Instr.Call (CallKind.Function (math.big.NewInt [(Register.read "t20")])) in
+      let* "t35" := Instr.Call (CallKind.Function (math.big.NewInt [(Register.read "t22")])) in
+      let* "t36" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t33"); (Register.read "t34"); (Register.read "t35")])) in
+      let* "t37" := Instr.Call (CallKind.Function (makeInt [(Register.read "t36")])) in
       M.Return [(Register.read "t37")]
     );
     (19,
@@ -348,11 +357,11 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.Jump 14
     );
     (20,
-      let* "t39" := Instr.Call (CallKind.Function is63bit) [(Register.read "t22")] in
+      let* "t39" := Instr.Call (CallKind.Function (is63bit [(Register.read "t22")])) in
       Instr.If (Register.read "t39") 19 18
     );
     (21,
-      let* "t40" := Instr.Call (CallKind.Function is32bit) [(Register.read "t20")] in
+      let* "t40" := Instr.Call (CallKind.Function (is32bit [(Register.read "t20")])) in
       Instr.If (Register.read "t40") 30 28
     );
     (22,
@@ -360,11 +369,11 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t41") 21 27
     );
     (23,
-      let* "t42" := Instr.Call (CallKind.Function newInt) [] in
-      let* "t43" := Instr.Call (CallKind.Function math.big.NewInt) [(Register.read "t20")] in
-      let* "t44" := Instr.Call (CallKind.Function math.big.NewInt) [(Register.read "t22")] in
-      let* "t45" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t42"); (Register.read "t43"); (Register.read "t44")] in
-      let* "t46" := Instr.Call (CallKind.Function makeInt) [(Register.read "t45")] in
+      let* "t42" := Instr.Call (CallKind.Function (newInt [])) in
+      let* "t43" := Instr.Call (CallKind.Function (math.big.NewInt [(Register.read "t20")])) in
+      let* "t44" := Instr.Call (CallKind.Function (math.big.NewInt [(Register.read "t22")])) in
+      let* "t45" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t42"); (Register.read "t43"); (Register.read "t44")])) in
+      let* "t46" := Instr.Call (CallKind.Function (makeInt [(Register.read "t45")])) in
       M.Return [(Register.read "t46")]
     );
     (24,
@@ -372,12 +381,12 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.Jump 14
     );
     (25,
-      let* "t48" := Instr.Call (CallKind.Function is63bit) [(Register.read "t22")] in
+      let* "t48" := Instr.Call (CallKind.Function (is63bit [(Register.read "t22")])) in
       Instr.If (Register.read "t48") 24 23
     );
     (26,
-      let* "t49" := Instr.Call (CallKind.Function math.big.NewRat) [(Register.read "t20"); (Register.read "t22")] in
-      let* "t50" := Instr.Call (CallKind.Function makeRat) [(Register.read "t49")] in
+      let* "t49" := Instr.Call (CallKind.Function (math.big.NewRat [(Register.read "t20"); (Register.read "t22")])) in
+      let* "t50" := Instr.Call (CallKind.Function (makeRat [(Register.read "t49")])) in
       M.Return [(Register.read "t50")]
     );
     (27,
@@ -385,11 +394,11 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t51") 26 32
     );
     (28,
-      let* "t52" := Instr.Call (CallKind.Function newInt) [] in
-      let* "t53" := Instr.Call (CallKind.Function math.big.NewInt) [(Register.read "t20")] in
-      let* "t54" := Instr.Call (CallKind.Function math.big.NewInt) [(Register.read "t22")] in
-      let* "t55" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t52"); (Register.read "t53"); (Register.read "t54")] in
-      let* "t56" := Instr.Call (CallKind.Function makeInt) [(Register.read "t55")] in
+      let* "t52" := Instr.Call (CallKind.Function (newInt [])) in
+      let* "t53" := Instr.Call (CallKind.Function (math.big.NewInt [(Register.read "t20")])) in
+      let* "t54" := Instr.Call (CallKind.Function (math.big.NewInt [(Register.read "t22")])) in
+      let* "t55" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t52"); (Register.read "t53"); (Register.read "t54")])) in
+      let* "t56" := Instr.Call (CallKind.Function (makeInt [(Register.read "t55")])) in
       M.Return [(Register.read "t56")]
     );
     (29,
@@ -397,7 +406,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.Jump 14
     );
     (30,
-      let* "t58" := Instr.Call (CallKind.Function is32bit) [(Register.read "t22")] in
+      let* "t58" := Instr.Call (CallKind.Function (is32bit [(Register.read "t22")])) in
       Instr.If (Register.read "t58") 29 28
     );
     (31,
@@ -452,26 +461,26 @@ CoFixpoint BinaryOp : Function.t :=
       let* "t71" := Instr.Alloc (* varargs *) Alloc.Heap "*[3]any" in
       let* "t72" := Instr.IndexAddr (Register.read "t71") TODO_constant in
       let* "t73" := Instr.ChangeInterface x_ in
-      let* _ := Instr.Store (Register.read "t72") (Register.read "t73") in
+      do* Instr.Store (Register.read "t72") (Register.read "t73") in
       let* "t74" := Instr.IndexAddr (Register.read "t71") TODO_constant in
       let* "t75" := Instr.MakeInterface op in
-      let* _ := Instr.Store (Register.read "t74") (Register.read "t75") in
+      do* Instr.Store (Register.read "t74") (Register.read "t75") in
       let* "t76" := Instr.IndexAddr (Register.read "t71") TODO_constant in
       let* "t77" := Instr.ChangeInterface y_ in
-      let* _ := Instr.Store (Register.read "t76") (Register.read "t77") in
+      do* Instr.Store (Register.read "t76") (Register.read "t77") in
       let* "t78" := Instr.Slice (Register.read "t71") None None in
-      let* "t79" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t78")] in
+      let* "t79" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t78")])) in
       let* "t80" := Instr.MakeInterface (Register.read "t79") in
       Instr.Panic (Register.read "t80")
     );
     (44,
       let* "t81" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t81") (Register.read "t25") in
+      do* Instr.Store (Register.read "t81") (Register.read "t25") in
       let* "t82" := Instr.FieldAddr (Register.read "t81") 0 in
       let* "t83" := Instr.UnOp "*" (Register.read "t82") in
       let* "t84" := Instr.TypeAssert (Register.read "t2") TypeAssert.NoCommaOk "go/constant.intVal" in
       let* "t85" := Instr.Field (Register.read "t84") 0 in
-      let* "t86" := Instr.Call (CallKind.Function newInt) [] in
+      let* "t86" := Instr.Call (CallKind.Function (newInt [])) in
       let* "t87" := Instr.BinOp op "==" TODO_constant in
       Instr.If (Register.read "t87") 47 49
     );
@@ -482,15 +491,15 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t90") 66 67
     );
     (46,
-      let* "t91" := Instr.Call (CallKind.Function makeInt) [(Register.read "t86")] in
+      let* "t91" := Instr.Call (CallKind.Function (makeInt [(Register.read "t86")])) in
       M.Return [(Register.read "t91")]
     );
     (47,
-      let* "t92" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")] in
+      let* "t92" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")])) in
       Instr.Jump 46
     );
     (48,
-      let* "t93" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")] in
+      let* "t93" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")])) in
       Instr.Jump 46
     );
     (49,
@@ -498,7 +507,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t94") 48 51
     );
     (50,
-      let* "t95" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")] in
+      let* "t95" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")])) in
       Instr.Jump 46
     );
     (51,
@@ -506,9 +515,9 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t96") 50 53
     );
     (52,
-      let* "t97" := Instr.Call (CallKind.Function newRat) [] in
-      let* "t98" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t97"); (Register.read "t83"); (Register.read "t85")] in
-      let* "t99" := Instr.Call (CallKind.Function makeRat) [(Register.read "t98")] in
+      let* "t97" := Instr.Call (CallKind.Function (newRat [])) in
+      let* "t98" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t97"); (Register.read "t83"); (Register.read "t85")])) in
+      let* "t99" := Instr.Call (CallKind.Function (makeRat [(Register.read "t98")])) in
       M.Return [(Register.read "t99")]
     );
     (53,
@@ -516,7 +525,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t100") 52 55
     );
     (54,
-      let* "t101" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")] in
+      let* "t101" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")])) in
       Instr.Jump 46
     );
     (55,
@@ -524,7 +533,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t102") 54 57
     );
     (56,
-      let* "t103" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")] in
+      let* "t103" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")])) in
       Instr.Jump 46
     );
     (57,
@@ -532,7 +541,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t104") 56 59
     );
     (58,
-      let* "t105" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")] in
+      let* "t105" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")])) in
       Instr.Jump 46
     );
     (59,
@@ -540,7 +549,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t106") 58 61
     );
     (60,
-      let* "t107" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")] in
+      let* "t107" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")])) in
       Instr.Jump 46
     );
     (61,
@@ -548,7 +557,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t108") 60 63
     );
     (62,
-      let* "t109" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")] in
+      let* "t109" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")])) in
       Instr.Jump 46
     );
     (63,
@@ -556,7 +565,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t110") 62 65
     );
     (64,
-      let* "t111" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")] in
+      let* "t111" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t86"); (Register.read "t83"); (Register.read "t85")])) in
       Instr.Jump 46
     );
     (65,
@@ -565,12 +574,12 @@ CoFixpoint BinaryOp : Function.t :=
     );
     (66,
       let* "t113" := Instr.Alloc (* x *) Alloc.Local "*go/constant.ratVal" in
-      let* _ := Instr.Store (Register.read "t113") (Register.read "t89") in
+      do* Instr.Store (Register.read "t113") (Register.read "t89") in
       let* "t114" := Instr.FieldAddr (Register.read "t113") 0 in
       let* "t115" := Instr.UnOp "*" (Register.read "t114") in
       let* "t116" := Instr.TypeAssert (Register.read "t2") TypeAssert.NoCommaOk "go/constant.ratVal" in
       let* "t117" := Instr.Field (Register.read "t116") 0 in
-      let* "t118" := Instr.Call (CallKind.Function newRat) [] in
+      let* "t118" := Instr.Call (CallKind.Function (newRat [])) in
       let* "t119" := Instr.BinOp op "==" TODO_constant in
       Instr.If (Register.read "t119") 69 71
     );
@@ -581,15 +590,15 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t122") 76 77
     );
     (68,
-      let* "t123" := Instr.Call (CallKind.Function makeRat) [(Register.read "t118")] in
+      let* "t123" := Instr.Call (CallKind.Function (makeRat [(Register.read "t118")])) in
       M.Return [(Register.read "t123")]
     );
     (69,
-      let* "t124" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t118"); (Register.read "t115"); (Register.read "t117")] in
+      let* "t124" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t118"); (Register.read "t115"); (Register.read "t117")])) in
       Instr.Jump 68
     );
     (70,
-      let* "t125" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t118"); (Register.read "t115"); (Register.read "t117")] in
+      let* "t125" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t118"); (Register.read "t115"); (Register.read "t117")])) in
       Instr.Jump 68
     );
     (71,
@@ -597,7 +606,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t126") 70 73
     );
     (72,
-      let* "t127" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t118"); (Register.read "t115"); (Register.read "t117")] in
+      let* "t127" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t118"); (Register.read "t115"); (Register.read "t117")])) in
       Instr.Jump 68
     );
     (73,
@@ -605,7 +614,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t128") 72 75
     );
     (74,
-      let* "t129" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t118"); (Register.read "t115"); (Register.read "t117")] in
+      let* "t129" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t118"); (Register.read "t115"); (Register.read "t117")])) in
       Instr.Jump 68
     );
     (75,
@@ -614,12 +623,12 @@ CoFixpoint BinaryOp : Function.t :=
     );
     (76,
       let* "t131" := Instr.Alloc (* x *) Alloc.Local "*go/constant.floatVal" in
-      let* _ := Instr.Store (Register.read "t131") (Register.read "t121") in
+      do* Instr.Store (Register.read "t131") (Register.read "t121") in
       let* "t132" := Instr.FieldAddr (Register.read "t131") 0 in
       let* "t133" := Instr.UnOp "*" (Register.read "t132") in
       let* "t134" := Instr.TypeAssert (Register.read "t2") TypeAssert.NoCommaOk "go/constant.floatVal" in
       let* "t135" := Instr.Field (Register.read "t134") 0 in
-      let* "t136" := Instr.Call (CallKind.Function newFloat) [] in
+      let* "t136" := Instr.Call (CallKind.Function (newFloat [])) in
       let* "t137" := Instr.BinOp op "==" TODO_constant in
       Instr.If (Register.read "t137") 79 81
     );
@@ -630,15 +639,15 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t140") 86 87
     );
     (78,
-      let* "t141" := Instr.Call (CallKind.Function makeFloat) [(Register.read "t136")] in
+      let* "t141" := Instr.Call (CallKind.Function (makeFloat [(Register.read "t136")])) in
       M.Return [(Register.read "t141")]
     );
     (79,
-      let* "t142" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t136"); (Register.read "t133"); (Register.read "t135")] in
+      let* "t142" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t136"); (Register.read "t133"); (Register.read "t135")])) in
       Instr.Jump 78
     );
     (80,
-      let* "t143" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t136"); (Register.read "t133"); (Register.read "t135")] in
+      let* "t143" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t136"); (Register.read "t133"); (Register.read "t135")])) in
       Instr.Jump 78
     );
     (81,
@@ -646,7 +655,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t144") 80 83
     );
     (82,
-      let* "t145" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t136"); (Register.read "t133"); (Register.read "t135")] in
+      let* "t145" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t136"); (Register.read "t133"); (Register.read "t135")])) in
       Instr.Jump 78
     );
     (83,
@@ -654,7 +663,7 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t146") 82 85
     );
     (84,
-      let* "t147" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t136"); (Register.read "t133"); (Register.read "t135")] in
+      let* "t147" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t136"); (Register.read "t133"); (Register.read "t135")])) in
       Instr.Jump 78
     );
     (85,
@@ -663,10 +672,10 @@ CoFixpoint BinaryOp : Function.t :=
     );
     (86,
       let* "t149" := Instr.Alloc (* x *) Alloc.Local "*go/constant.complexVal" in
-      let* _ := Instr.Store (Register.read "t149") (Register.read "t139") in
+      do* Instr.Store (Register.read "t149") (Register.read "t139") in
       let* "t150" := Instr.Alloc (* y *) Alloc.Local "*go/constant.complexVal" in
       let* "t151" := Instr.TypeAssert (Register.read "t2") TypeAssert.NoCommaOk "go/constant.complexVal" in
-      let* _ := Instr.Store (Register.read "t150") (Register.read "t151") in
+      do* Instr.Store (Register.read "t150") (Register.read "t151") in
       let* "t152" := Instr.FieldAddr (Register.read "t149") 0 in
       let* "t153" := Instr.UnOp "*" (Register.read "t152") in
       let* "t154" := Instr.FieldAddr (Register.read "t149") 1 in
@@ -687,17 +696,17 @@ CoFixpoint BinaryOp : Function.t :=
     (88,
       let* "t164" := Instr.Phi (* re *) [(Register.read "t167"); (Register.read "t169"); (Register.read "t176"); (Register.read "t187")] in
       let* "t165" := Instr.Phi (* im *) [(Register.read "t168"); (Register.read "t170"); (Register.read "t177"); (Register.read "t189")] in
-      let* "t166" := Instr.Call (CallKind.Function makeComplex) [(Register.read "t164"); (Register.read "t165")] in
+      let* "t166" := Instr.Call (CallKind.Function (makeComplex [(Register.read "t164"); (Register.read "t165")])) in
       M.Return [(Register.read "t166")]
     );
     (89,
-      let* "t167" := Instr.Call (CallKind.Function add) [(Register.read "t153"); (Register.read "t157")] in
-      let* "t168" := Instr.Call (CallKind.Function add) [(Register.read "t155"); (Register.read "t159")] in
+      let* "t167" := Instr.Call (CallKind.Function (add [(Register.read "t153"); (Register.read "t157")])) in
+      let* "t168" := Instr.Call (CallKind.Function (add [(Register.read "t155"); (Register.read "t159")])) in
       Instr.Jump 88
     );
     (90,
-      let* "t169" := Instr.Call (CallKind.Function sub) [(Register.read "t153"); (Register.read "t157")] in
-      let* "t170" := Instr.Call (CallKind.Function sub) [(Register.read "t155"); (Register.read "t159")] in
+      let* "t169" := Instr.Call (CallKind.Function (sub [(Register.read "t153"); (Register.read "t157")])) in
+      let* "t170" := Instr.Call (CallKind.Function (sub [(Register.read "t155"); (Register.read "t159")])) in
       Instr.Jump 88
     );
     (91,
@@ -705,12 +714,12 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t171") 90 93
     );
     (92,
-      let* "t172" := Instr.Call (CallKind.Function mul) [(Register.read "t153"); (Register.read "t157")] in
-      let* "t173" := Instr.Call (CallKind.Function mul) [(Register.read "t155"); (Register.read "t159")] in
-      let* "t174" := Instr.Call (CallKind.Function mul) [(Register.read "t155"); (Register.read "t157")] in
-      let* "t175" := Instr.Call (CallKind.Function mul) [(Register.read "t153"); (Register.read "t159")] in
-      let* "t176" := Instr.Call (CallKind.Function sub) [(Register.read "t172"); (Register.read "t173")] in
-      let* "t177" := Instr.Call (CallKind.Function add) [(Register.read "t174"); (Register.read "t175")] in
+      let* "t172" := Instr.Call (CallKind.Function (mul [(Register.read "t153"); (Register.read "t157")])) in
+      let* "t173" := Instr.Call (CallKind.Function (mul [(Register.read "t155"); (Register.read "t159")])) in
+      let* "t174" := Instr.Call (CallKind.Function (mul [(Register.read "t155"); (Register.read "t157")])) in
+      let* "t175" := Instr.Call (CallKind.Function (mul [(Register.read "t153"); (Register.read "t159")])) in
+      let* "t176" := Instr.Call (CallKind.Function (sub [(Register.read "t172"); (Register.read "t173")])) in
+      let* "t177" := Instr.Call (CallKind.Function (add [(Register.read "t174"); (Register.read "t175")])) in
       Instr.Jump 88
     );
     (93,
@@ -718,17 +727,17 @@ CoFixpoint BinaryOp : Function.t :=
       Instr.If (Register.read "t178") 92 95
     );
     (94,
-      let* "t179" := Instr.Call (CallKind.Function mul) [(Register.read "t153"); (Register.read "t157")] in
-      let* "t180" := Instr.Call (CallKind.Function mul) [(Register.read "t155"); (Register.read "t159")] in
-      let* "t181" := Instr.Call (CallKind.Function mul) [(Register.read "t155"); (Register.read "t157")] in
-      let* "t182" := Instr.Call (CallKind.Function mul) [(Register.read "t153"); (Register.read "t159")] in
-      let* "t183" := Instr.Call (CallKind.Function mul) [(Register.read "t157"); (Register.read "t157")] in
-      let* "t184" := Instr.Call (CallKind.Function mul) [(Register.read "t159"); (Register.read "t159")] in
-      let* "t185" := Instr.Call (CallKind.Function add) [(Register.read "t183"); (Register.read "t184")] in
-      let* "t186" := Instr.Call (CallKind.Function add) [(Register.read "t179"); (Register.read "t180")] in
-      let* "t187" := Instr.Call (CallKind.Function quo) [(Register.read "t186"); (Register.read "t185")] in
-      let* "t188" := Instr.Call (CallKind.Function sub) [(Register.read "t181"); (Register.read "t182")] in
-      let* "t189" := Instr.Call (CallKind.Function quo) [(Register.read "t188"); (Register.read "t185")] in
+      let* "t179" := Instr.Call (CallKind.Function (mul [(Register.read "t153"); (Register.read "t157")])) in
+      let* "t180" := Instr.Call (CallKind.Function (mul [(Register.read "t155"); (Register.read "t159")])) in
+      let* "t181" := Instr.Call (CallKind.Function (mul [(Register.read "t155"); (Register.read "t157")])) in
+      let* "t182" := Instr.Call (CallKind.Function (mul [(Register.read "t153"); (Register.read "t159")])) in
+      let* "t183" := Instr.Call (CallKind.Function (mul [(Register.read "t157"); (Register.read "t157")])) in
+      let* "t184" := Instr.Call (CallKind.Function (mul [(Register.read "t159"); (Register.read "t159")])) in
+      let* "t185" := Instr.Call (CallKind.Function (add [(Register.read "t183"); (Register.read "t184")])) in
+      let* "t186" := Instr.Call (CallKind.Function (add [(Register.read "t179"); (Register.read "t180")])) in
+      let* "t187" := Instr.Call (CallKind.Function (quo [(Register.read "t186"); (Register.read "t185")])) in
+      let* "t188" := Instr.Call (CallKind.Function (sub [(Register.read "t181"); (Register.read "t182")])) in
+      let* "t189" := Instr.Call (CallKind.Function (quo [(Register.read "t188"); (Register.read "t185")])) in
       Instr.Jump 88
     );
     (95,
@@ -744,19 +753,19 @@ CoFixpoint BinaryOp : Function.t :=
       let* "t193" := Instr.FieldAddr (Register.read "t192") 2 in
       let* "t194" := Instr.FieldAddr (Register.read "t192") 3 in
       let* "t195" := Instr.TypeAssert (Register.read "t2") TypeAssert.NoCommaOk "*go/constant.stringVal" in
-      let* _ := Instr.Store (Register.read "t193") (Register.read "t162") in
-      let* _ := Instr.Store (Register.read "t194") (Register.read "t195") in
+      do* Instr.Store (Register.read "t193") (Register.read "t162") in
+      do* Instr.Store (Register.read "t194") (Register.read "t195") in
       let* "t196" := Instr.MakeInterface (Register.read "t192") in
       M.Return [(Register.read "t196")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with BitLen : Function.t :=
-  Function.Body (fun α =>
+with BitLen (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -780,16 +789,16 @@ with BitLen : Function.t :=
     );
     (4,
       let* "t10" := Instr.Phi (* u *) [(Register.read "t3"); (Register.read "t9")] in
-      let* "t11" := Instr.Call (CallKind.Function math.bits.LeadingZeros64) [(Register.read "t10")] in
+      let* "t11" := Instr.Call (CallKind.Function (math.bits.LeadingZeros64 [(Register.read "t10")])) in
       let* "t12" := Instr.BinOp TODO_constant "-" (Register.read "t11") in
       M.Return [(Register.read "t12")]
     );
     (5,
       let* "t13" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t13") (Register.read "t6") in
+      do* Instr.Store (Register.read "t13") (Register.read "t6") in
       let* "t14" := Instr.FieldAddr (Register.read "t13") 0 in
       let* "t15" := Instr.UnOp "*" (Register.read "t14") in
-      let* "t16" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t15")] in
+      let* "t16" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t15")])) in
       M.Return [(Register.read "t16")]
     );
     (6,
@@ -805,20 +814,20 @@ with BitLen : Function.t :=
       let* "t20" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t21" := Instr.IndexAddr (Register.read "t20") TODO_constant in
       let* "t22" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t21") (Register.read "t22") in
+      do* Instr.Store (Register.read "t21") (Register.read "t22") in
       let* "t23" := Instr.Slice (Register.read "t20") None None in
-      let* "t24" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t23")] in
+      let* "t24" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t23")])) in
       let* "t25" := Instr.MakeInterface (Register.read "t24") in
       Instr.Panic (Register.read "t25")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with BoolVal : Function.t :=
-  Function.Body (fun α =>
+with BoolVal (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.boolVal" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -841,20 +850,20 @@ with BoolVal : Function.t :=
       let* "t7" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t8" := Instr.IndexAddr (Register.read "t7") TODO_constant in
       let* "t9" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t8") (Register.read "t9") in
+      do* Instr.Store (Register.read "t8") (Register.read "t9") in
       let* "t10" := Instr.Slice (Register.read "t7") None None in
-      let* "t11" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t10")] in
+      let* "t11" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t10")])) in
       let* "t12" := Instr.MakeInterface (Register.read "t11") in
       Instr.Panic (Register.read "t12")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Bytes : Function.t :=
-  Function.Body (fun α =>
+with Bytes (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* t *) Alloc.Local "*go/constant.intVal" in
       let* "t1" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t2" := Instr.Extract (Register.read "t1") 0 in
@@ -864,16 +873,16 @@ with Bytes : Function.t :=
     (1,
       let* "t4" := Instr.FieldAddr (Register.read "t0") 0 in
       let* "t5" := Instr.UnOp "*" (Register.read "t4") in
-      let* "t6" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t5")] in
-      let* "t7" := Instr.Call (CallKind.Function len) [(Register.read "t6")] in
+      let* "t6" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t5")])) in
+      let* "t7" := Instr.Call (CallKind.Function (len [(Register.read "t6")])) in
       let* "t8" := Instr.BinOp (Register.read "t7") "*" TODO_constant in
       let* "t9" := Instr.MakeSlice (Register.read "t8") (Register.read "t8") in
-      let* "t10" := Instr.Call (CallKind.Function len) [(Register.read "t6")] in
+      let* "t10" := Instr.Call (CallKind.Function (len [(Register.read "t6")])) in
       Instr.Jump 6
     );
     (2,
-      let* "t11" := Instr.Call (CallKind.Function i64toi) [(Register.read "t2")] in
-      let* _ := Instr.Store (Register.read "t0") (Register.read "t11") in
+      let* "t11" := Instr.Call (CallKind.Function (i64toi [(Register.read "t2")])) in
+      do* Instr.Store (Register.read "t0") (Register.read "t11") in
       Instr.Jump 1
     );
     (3,
@@ -883,16 +892,16 @@ with Bytes : Function.t :=
       Instr.If (Register.read "t14") 4 5
     );
     (4,
-      let* _ := Instr.Store (Register.read "t0") (Register.read "t13") in
+      do* Instr.Store (Register.read "t0") (Register.read "t13") in
       Instr.Jump 1
     );
     (5,
       let* "t15" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t16" := Instr.IndexAddr (Register.read "t15") TODO_constant in
       let* "t17" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t16") (Register.read "t17") in
+      do* Instr.Store (Register.read "t16") (Register.read "t17") in
       let* "t18" := Instr.Slice (Register.read "t15") None None in
-      let* "t19" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t18")] in
+      let* "t19" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t18")])) in
       let* "t20" := Instr.MakeInterface (Register.read "t19") in
       Instr.Panic (Register.read "t20")
     );
@@ -911,7 +920,7 @@ with Bytes : Function.t :=
     (8,
       let* "t27" := Instr.Convert (Register.read "t33") in
       let* "t28" := Instr.IndexAddr (Register.read "t9") (Register.read "t32") in
-      let* _ := Instr.Store (Register.read "t28") (Register.read "t27") in
+      do* Instr.Store (Register.read "t28") (Register.read "t27") in
       let* "t29" := Instr.BinOp (Register.read "t33") ">>" TODO_constant in
       let* "t30" := Instr.BinOp (Register.read "t32") "+" TODO_constant in
       let* "t31" := Instr.BinOp (Register.read "t34") "+" TODO_constant in
@@ -943,16 +952,16 @@ with Bytes : Function.t :=
       let* "t42" := Instr.UnOp "*" (Register.read "t41") in
       let* "t43" := Instr.BinOp (Register.read "t42") "==" TODO_constant in
       Instr.If (Register.read "t43") 10 11
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Compare : Function.t :=
-  Function.Body (fun α =>
+with Compare (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x_; op; y_] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function _'match) [x_; y_] in
+  | [x_; op; y_] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (_'match [x_; y_])) in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
       let* "t3" := Instr.TypeAssert (Register.read "t1") TypeAssert.CommaOk "go/constant.unknownVal" in
@@ -964,15 +973,15 @@ with Compare : Function.t :=
       let* "t6" := Instr.Alloc (* varargs *) Alloc.Heap "*[3]any" in
       let* "t7" := Instr.IndexAddr (Register.read "t6") TODO_constant in
       let* "t8" := Instr.ChangeInterface x_ in
-      let* _ := Instr.Store (Register.read "t7") (Register.read "t8") in
+      do* Instr.Store (Register.read "t7") (Register.read "t8") in
       let* "t9" := Instr.IndexAddr (Register.read "t6") TODO_constant in
       let* "t10" := Instr.MakeInterface op in
-      let* _ := Instr.Store (Register.read "t9") (Register.read "t10") in
+      do* Instr.Store (Register.read "t9") (Register.read "t10") in
       let* "t11" := Instr.IndexAddr (Register.read "t6") TODO_constant in
       let* "t12" := Instr.ChangeInterface y_ in
-      let* _ := Instr.Store (Register.read "t11") (Register.read "t12") in
+      do* Instr.Store (Register.read "t11") (Register.read "t12") in
       let* "t13" := Instr.Slice (Register.read "t6") None None in
-      let* "t14" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t13")] in
+      let* "t14" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t13")])) in
       let* "t15" := Instr.MakeInterface (Register.read "t14") in
       Instr.Panic (Register.read "t15")
     );
@@ -1065,13 +1074,13 @@ with Compare : Function.t :=
     );
     (22,
       let* "t43" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t43") (Register.read "t30") in
+      do* Instr.Store (Register.read "t43") (Register.read "t30") in
       let* "t44" := Instr.FieldAddr (Register.read "t43") 0 in
       let* "t45" := Instr.UnOp "*" (Register.read "t44") in
       let* "t46" := Instr.TypeAssert (Register.read "t2") TypeAssert.NoCommaOk "go/constant.intVal" in
       let* "t47" := Instr.Field (Register.read "t46") 0 in
-      let* "t48" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t45"); (Register.read "t47")] in
-      let* "t49" := Instr.Call (CallKind.Function cmpZero) [(Register.read "t48"); op] in
+      let* "t48" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t45"); (Register.read "t47")])) in
+      let* "t49" := Instr.Call (CallKind.Function (cmpZero [(Register.read "t48"); op])) in
       M.Return [(Register.read "t49")]
     );
     (23,
@@ -1082,13 +1091,13 @@ with Compare : Function.t :=
     );
     (24,
       let* "t53" := Instr.Alloc (* x *) Alloc.Local "*go/constant.ratVal" in
-      let* _ := Instr.Store (Register.read "t53") (Register.read "t51") in
+      do* Instr.Store (Register.read "t53") (Register.read "t51") in
       let* "t54" := Instr.FieldAddr (Register.read "t53") 0 in
       let* "t55" := Instr.UnOp "*" (Register.read "t54") in
       let* "t56" := Instr.TypeAssert (Register.read "t2") TypeAssert.NoCommaOk "go/constant.ratVal" in
       let* "t57" := Instr.Field (Register.read "t56") 0 in
-      let* "t58" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t55"); (Register.read "t57")] in
-      let* "t59" := Instr.Call (CallKind.Function cmpZero) [(Register.read "t58"); op] in
+      let* "t58" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t55"); (Register.read "t57")])) in
+      let* "t59" := Instr.Call (CallKind.Function (cmpZero [(Register.read "t58"); op])) in
       M.Return [(Register.read "t59")]
     );
     (25,
@@ -1099,13 +1108,13 @@ with Compare : Function.t :=
     );
     (26,
       let* "t63" := Instr.Alloc (* x *) Alloc.Local "*go/constant.floatVal" in
-      let* _ := Instr.Store (Register.read "t63") (Register.read "t61") in
+      do* Instr.Store (Register.read "t63") (Register.read "t61") in
       let* "t64" := Instr.FieldAddr (Register.read "t63") 0 in
       let* "t65" := Instr.UnOp "*" (Register.read "t64") in
       let* "t66" := Instr.TypeAssert (Register.read "t2") TypeAssert.NoCommaOk "go/constant.floatVal" in
       let* "t67" := Instr.Field (Register.read "t66") 0 in
-      let* "t68" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t65"); (Register.read "t67")] in
-      let* "t69" := Instr.Call (CallKind.Function cmpZero) [(Register.read "t68"); op] in
+      let* "t68" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t65"); (Register.read "t67")])) in
+      let* "t69" := Instr.Call (CallKind.Function (cmpZero [(Register.read "t68"); op])) in
       M.Return [(Register.read "t69")]
     );
     (27,
@@ -1116,20 +1125,20 @@ with Compare : Function.t :=
     );
     (28,
       let* "t73" := Instr.Alloc (* x *) Alloc.Local "*go/constant.complexVal" in
-      let* _ := Instr.Store (Register.read "t73") (Register.read "t71") in
+      do* Instr.Store (Register.read "t73") (Register.read "t71") in
       let* "t74" := Instr.Alloc (* y *) Alloc.Local "*go/constant.complexVal" in
       let* "t75" := Instr.TypeAssert (Register.read "t2") TypeAssert.NoCommaOk "go/constant.complexVal" in
-      let* _ := Instr.Store (Register.read "t74") (Register.read "t75") in
+      do* Instr.Store (Register.read "t74") (Register.read "t75") in
       let* "t76" := Instr.FieldAddr (Register.read "t73") 0 in
       let* "t77" := Instr.UnOp "*" (Register.read "t76") in
       let* "t78" := Instr.FieldAddr (Register.read "t74") 0 in
       let* "t79" := Instr.UnOp "*" (Register.read "t78") in
-      let* "t80" := Instr.Call (CallKind.Function Compare) [(Register.read "t77"); TODO_constant; (Register.read "t79")] in
+      let* "t80" := Instr.Call (CallKind.Function (Compare [(Register.read "t77"); TODO_constant; (Register.read "t79")])) in
       let* "t81" := Instr.FieldAddr (Register.read "t73") 1 in
       let* "t82" := Instr.UnOp "*" (Register.read "t81") in
       let* "t83" := Instr.FieldAddr (Register.read "t74") 1 in
       let* "t84" := Instr.UnOp "*" (Register.read "t83") in
-      let* "t85" := Instr.Call (CallKind.Function Compare) [(Register.read "t82"); TODO_constant; (Register.read "t84")] in
+      let* "t85" := Instr.Call (CallKind.Function (Compare [(Register.read "t82"); TODO_constant; (Register.read "t84")])) in
       let* "t86" := Instr.BinOp op "==" TODO_constant in
       Instr.If (Register.read "t86") 30 32
     );
@@ -1165,9 +1174,9 @@ with Compare : Function.t :=
       M.Return [(Register.read "t93")]
     );
     (37,
-      let* "t94" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t88")] in
+      let* "t94" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t88")])) in
       let* "t95" := Instr.TypeAssert (Register.read "t2") TypeAssert.NoCommaOk "*go/constant.stringVal" in
-      let* "t96" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t95")] in
+      let* "t96" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t95")])) in
       let* "t97" := Instr.BinOp op "==" TODO_constant in
       Instr.If (Register.read "t97") 38 40
     );
@@ -1214,15 +1223,15 @@ with Compare : Function.t :=
     (48,
       let* "t108" := Instr.BinOp op "==" TODO_constant in
       Instr.If (Register.read "t108") 47 1
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Denom : Function.t :=
-  Function.Body (fun α =>
+with Denom (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -1250,11 +1259,11 @@ with Denom : Function.t :=
     );
     (5,
       let* "t11" := Instr.Alloc (* x *) Alloc.Local "*go/constant.ratVal" in
-      let* _ := Instr.Store (Register.read "t11") (Register.read "t9") in
+      do* Instr.Store (Register.read "t11") (Register.read "t9") in
       let* "t12" := Instr.FieldAddr (Register.read "t11") 0 in
       let* "t13" := Instr.UnOp "*" (Register.read "t12") in
-      let* "t14" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t13")] in
-      let* "t15" := Instr.Call (CallKind.Function makeInt) [(Register.read "t14")] in
+      let* "t14" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t13")])) in
+      let* "t15" := Instr.Call (CallKind.Function (makeInt [(Register.read "t14")])) in
       M.Return [(Register.read "t15")]
     );
     (6,
@@ -1265,10 +1274,10 @@ with Denom : Function.t :=
     );
     (7,
       let* "t19" := Instr.Alloc (* x *) Alloc.Local "*go/constant.floatVal" in
-      let* _ := Instr.Store (Register.read "t19") (Register.read "t17") in
+      do* Instr.Store (Register.read "t19") (Register.read "t17") in
       let* "t20" := Instr.FieldAddr (Register.read "t19") 0 in
       let* "t21" := Instr.UnOp "*" (Register.read "t20") in
-      let* "t22" := Instr.Call (CallKind.Function smallFloat) [(Register.read "t21")] in
+      let* "t22" := Instr.Call (CallKind.Function (smallFloat [(Register.read "t21")])) in
       Instr.If (Register.read "t22") 9 1
     );
     (8,
@@ -1280,11 +1289,11 @@ with Denom : Function.t :=
     (9,
       let* "t26" := Instr.FieldAddr (Register.read "t19") 0 in
       let* "t27" := Instr.UnOp "*" (Register.read "t26") in
-      let* "t28" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t27"); TODO_constant] in
+      let* "t28" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t27"); TODO_constant])) in
       let* "t29" := Instr.Extract (Register.read "t28") 0 in
       let* "t30" := Instr.Extract (Register.read "t28") 1 in
-      let* "t31" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t29")] in
-      let* "t32" := Instr.Call (CallKind.Function makeInt) [(Register.read "t31")] in
+      let* "t31" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t29")])) in
+      let* "t32" := Instr.Call (CallKind.Function (makeInt [(Register.read "t31")])) in
       M.Return [(Register.read "t32")]
     );
     (10,
@@ -1294,20 +1303,20 @@ with Denom : Function.t :=
       let* "t33" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t34" := Instr.IndexAddr (Register.read "t33") TODO_constant in
       let* "t35" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t34") (Register.read "t35") in
+      do* Instr.Store (Register.read "t34") (Register.read "t35") in
       let* "t36" := Instr.Slice (Register.read "t33") None None in
-      let* "t37" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t36")] in
+      let* "t37" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t36")])) in
       let* "t38" := Instr.MakeInterface (Register.read "t37") in
       Instr.Panic (Register.read "t38")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Float32Val : Function.t :=
-  Function.Body (fun α =>
+with Float32Val (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -1327,12 +1336,12 @@ with Float32Val : Function.t :=
     );
     (3,
       let* "t9" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t9") (Register.read "t7") in
-      let* "t10" := Instr.Call (CallKind.Function newFloat) [] in
+      do* Instr.Store (Register.read "t9") (Register.read "t7") in
+      let* "t10" := Instr.Call (CallKind.Function (newFloat [])) in
       let* "t11" := Instr.FieldAddr (Register.read "t9") 0 in
       let* "t12" := Instr.UnOp "*" (Register.read "t11") in
-      let* "t13" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t10"); (Register.read "t12")] in
-      let* "t14" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t13")] in
+      let* "t13" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t10"); (Register.read "t12")])) in
+      let* "t14" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t13")])) in
       let* "t15" := Instr.Extract (Register.read "t14") 0 in
       let* "t16" := Instr.Extract (Register.read "t14") 1 in
       let* "t17" := Instr.BinOp (Register.read "t16") "==" TODO_constant in
@@ -1346,10 +1355,10 @@ with Float32Val : Function.t :=
     );
     (5,
       let* "t21" := Instr.Alloc (* x *) Alloc.Local "*go/constant.ratVal" in
-      let* _ := Instr.Store (Register.read "t21") (Register.read "t19") in
+      do* Instr.Store (Register.read "t21") (Register.read "t19") in
       let* "t22" := Instr.FieldAddr (Register.read "t21") 0 in
       let* "t23" := Instr.UnOp "*" (Register.read "t22") in
-      let* "t24" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t23")] in
+      let* "t24" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t23")])) in
       let* "t25" := Instr.Extract (Register.read "t24") 0 in
       let* "t26" := Instr.Extract (Register.read "t24") 1 in
       M.Return [(Register.read "t25"); (Register.read "t26")]
@@ -1362,10 +1371,10 @@ with Float32Val : Function.t :=
     );
     (7,
       let* "t30" := Instr.Alloc (* x *) Alloc.Local "*go/constant.floatVal" in
-      let* _ := Instr.Store (Register.read "t30") (Register.read "t28") in
+      do* Instr.Store (Register.read "t30") (Register.read "t28") in
       let* "t31" := Instr.FieldAddr (Register.read "t30") 0 in
       let* "t32" := Instr.UnOp "*" (Register.read "t31") in
-      let* "t33" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t32")] in
+      let* "t33" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t32")])) in
       let* "t34" := Instr.Extract (Register.read "t33") 0 in
       let* "t35" := Instr.Extract (Register.read "t33") 1 in
       let* "t36" := Instr.BinOp (Register.read "t35") "==" TODO_constant in
@@ -1384,20 +1393,20 @@ with Float32Val : Function.t :=
       let* "t40" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t41" := Instr.IndexAddr (Register.read "t40") TODO_constant in
       let* "t42" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t41") (Register.read "t42") in
+      do* Instr.Store (Register.read "t41") (Register.read "t42") in
       let* "t43" := Instr.Slice (Register.read "t40") None None in
-      let* "t44" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t43")] in
+      let* "t44" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t43")])) in
       let* "t45" := Instr.MakeInterface (Register.read "t44") in
       Instr.Panic (Register.read "t45")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Float64Val : Function.t :=
-  Function.Body (fun α =>
+with Float64Val (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -1418,12 +1427,12 @@ with Float64Val : Function.t :=
     );
     (3,
       let* "t10" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t10") (Register.read "t8") in
-      let* "t11" := Instr.Call (CallKind.Function newFloat) [] in
+      do* Instr.Store (Register.read "t10") (Register.read "t8") in
+      let* "t11" := Instr.Call (CallKind.Function (newFloat [])) in
       let* "t12" := Instr.FieldAddr (Register.read "t10") 0 in
       let* "t13" := Instr.UnOp "*" (Register.read "t12") in
-      let* "t14" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t11"); (Register.read "t13")] in
-      let* "t15" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t14")] in
+      let* "t14" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t11"); (Register.read "t13")])) in
+      let* "t15" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t14")])) in
       let* "t16" := Instr.Extract (Register.read "t15") 0 in
       let* "t17" := Instr.Extract (Register.read "t15") 1 in
       let* "t18" := Instr.BinOp (Register.read "t17") "==" TODO_constant in
@@ -1437,10 +1446,10 @@ with Float64Val : Function.t :=
     );
     (5,
       let* "t22" := Instr.Alloc (* x *) Alloc.Local "*go/constant.ratVal" in
-      let* _ := Instr.Store (Register.read "t22") (Register.read "t20") in
+      do* Instr.Store (Register.read "t22") (Register.read "t20") in
       let* "t23" := Instr.FieldAddr (Register.read "t22") 0 in
       let* "t24" := Instr.UnOp "*" (Register.read "t23") in
-      let* "t25" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t24")] in
+      let* "t25" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t24")])) in
       let* "t26" := Instr.Extract (Register.read "t25") 0 in
       let* "t27" := Instr.Extract (Register.read "t25") 1 in
       M.Return [(Register.read "t26"); (Register.read "t27")]
@@ -1453,10 +1462,10 @@ with Float64Val : Function.t :=
     );
     (7,
       let* "t31" := Instr.Alloc (* x *) Alloc.Local "*go/constant.floatVal" in
-      let* _ := Instr.Store (Register.read "t31") (Register.read "t29") in
+      do* Instr.Store (Register.read "t31") (Register.read "t29") in
       let* "t32" := Instr.FieldAddr (Register.read "t31") 0 in
       let* "t33" := Instr.UnOp "*" (Register.read "t32") in
-      let* "t34" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t33")] in
+      let* "t34" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t33")])) in
       let* "t35" := Instr.Extract (Register.read "t34") 0 in
       let* "t36" := Instr.Extract (Register.read "t34") 1 in
       let* "t37" := Instr.BinOp (Register.read "t36") "==" TODO_constant in
@@ -1475,20 +1484,20 @@ with Float64Val : Function.t :=
       let* "t41" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t42" := Instr.IndexAddr (Register.read "t41") TODO_constant in
       let* "t43" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t42") (Register.read "t43") in
+      do* Instr.Store (Register.read "t42") (Register.read "t43") in
       let* "t44" := Instr.Slice (Register.read "t41") None None in
-      let* "t45" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t44")] in
+      let* "t45" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t44")])) in
       let* "t46" := Instr.MakeInterface (Register.read "t45") in
       Instr.Panic (Register.read "t46")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Imag : Function.t :=
-  Function.Body (fun α =>
+with Imag (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.unknownVal" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -1534,7 +1543,7 @@ with Imag : Function.t :=
     );
     (8,
       let* "t20" := Instr.Alloc (* x *) Alloc.Local "*go/constant.complexVal" in
-      let* _ := Instr.Store (Register.read "t20") (Register.read "t18") in
+      do* Instr.Store (Register.read "t20") (Register.read "t18") in
       let* "t21" := Instr.FieldAddr (Register.read "t20") 1 in
       let* "t22" := Instr.UnOp "*" (Register.read "t21") in
       M.Return [(Register.read "t22")]
@@ -1543,20 +1552,20 @@ with Imag : Function.t :=
       let* "t23" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t24" := Instr.IndexAddr (Register.read "t23") TODO_constant in
       let* "t25" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t24") (Register.read "t25") in
+      do* Instr.Store (Register.read "t24") (Register.read "t25") in
       let* "t26" := Instr.Slice (Register.read "t23") None None in
-      let* "t27" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t26")] in
+      let* "t27" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t26")])) in
       let* "t28" := Instr.MakeInterface (Register.read "t27") in
       Instr.Panic (Register.read "t28")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Int64Val : Function.t :=
-  Function.Body (fun α =>
+with Int64Val (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -1574,10 +1583,10 @@ with Int64Val : Function.t :=
     );
     (3,
       let* "t7" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t7") (Register.read "t5") in
+      do* Instr.Store (Register.read "t7") (Register.read "t5") in
       let* "t8" := Instr.FieldAddr (Register.read "t7") 0 in
       let* "t9" := Instr.UnOp "*" (Register.read "t8") in
-      let* "t10" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t9")] in
+      let* "t10" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t9")])) in
       M.Return [(Register.read "t10"); TODO_constant]
     );
     (4,
@@ -1593,20 +1602,20 @@ with Int64Val : Function.t :=
       let* "t14" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t15" := Instr.IndexAddr (Register.read "t14") TODO_constant in
       let* "t16" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t15") (Register.read "t16") in
+      do* Instr.Store (Register.read "t15") (Register.read "t16") in
       let* "t17" := Instr.Slice (Register.read "t14") None None in
-      let* "t18" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t17")] in
+      let* "t18" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t17")])) in
       let* "t19" := Instr.MakeInterface (Register.read "t18") in
       Instr.Panic (Register.read "t19")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Make : Function.t :=
-  Function.Body (fun α =>
+with Make (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "bool" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -1626,7 +1635,7 @@ with Make : Function.t :=
     (3,
       let* "t8" := Instr.Alloc (* complit *) Alloc.Heap "*go/constant.stringVal" in
       let* "t9" := Instr.FieldAddr (Register.read "t8") 1 in
-      let* _ := Instr.Store (Register.read "t9") (Register.read "t6") in
+      do* Instr.Store (Register.read "t9") (Register.read "t6") in
       let* "t10" := Instr.MakeInterface (Register.read "t8") in
       M.Return [(Register.read "t10")]
     );
@@ -1648,7 +1657,7 @@ with Make : Function.t :=
       Instr.If (Register.read "t18") 7 8
     );
     (7,
-      let* "t19" := Instr.Call (CallKind.Function makeInt) [(Register.read "t17")] in
+      let* "t19" := Instr.Call (CallKind.Function (makeInt [(Register.read "t17")])) in
       M.Return [(Register.read "t19")]
     );
     (8,
@@ -1658,7 +1667,7 @@ with Make : Function.t :=
       Instr.If (Register.read "t22") 9 10
     );
     (9,
-      let* "t23" := Instr.Call (CallKind.Function makeRat) [(Register.read "t21")] in
+      let* "t23" := Instr.Call (CallKind.Function (makeRat [(Register.read "t21")])) in
       M.Return [(Register.read "t23")]
     );
     (10,
@@ -1668,34 +1677,34 @@ with Make : Function.t :=
       Instr.If (Register.read "t26") 11 12
     );
     (11,
-      let* "t27" := Instr.Call (CallKind.Function makeFloat) [(Register.read "t25")] in
+      let* "t27" := Instr.Call (CallKind.Function (makeFloat [(Register.read "t25")])) in
       M.Return [(Register.read "t27")]
     );
     (12,
       let* "t28" := Instr.MakeInterface TODO_constant in
       M.Return [(Register.read "t28")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with MakeBool : Function.t :=
-  Function.Body (fun α =>
+with MakeBool (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [b] =>
-    [(0,
+  | [b] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.ChangeType b in
       let* "t1" := Instr.MakeInterface (Register.read "t0") in
       M.Return [(Register.read "t1")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with MakeFloat64 : Function.t :=
-  Function.Body (fun α =>
+with MakeFloat64 (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function math.IsInf) [x; TODO_constant] in
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (math.IsInf [x; TODO_constant])) in
       Instr.If (Register.read "t0") 1 3
     );
     (1,
@@ -1703,20 +1712,20 @@ with MakeFloat64 : Function.t :=
       M.Return [(Register.read "t1")]
     );
     (2,
-      let* "t2" := Instr.Call (CallKind.Function smallFloat64) [x] in
+      let* "t2" := Instr.Call (CallKind.Function (smallFloat64 [x])) in
       Instr.If (Register.read "t2") 4 5
     );
     (3,
-      let* "t3" := Instr.Call (CallKind.Function math.IsNaN) [x] in
+      let* "t3" := Instr.Call (CallKind.Function (math.IsNaN [x])) in
       Instr.If (Register.read "t3") 1 2
     );
     (4,
       let* "t4" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.ratVal" in
       let* "t5" := Instr.FieldAddr (Register.read "t4") 0 in
-      let* "t6" := Instr.Call (CallKind.Function newRat) [] in
+      let* "t6" := Instr.Call (CallKind.Function (newRat [])) in
       let* "t7" := Instr.BinOp x "+" TODO_constant in
-      let* "t8" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t6"); (Register.read "t7")] in
-      let* _ := Instr.Store (Register.read "t5") (Register.read "t8") in
+      let* "t8" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t6"); (Register.read "t7")])) in
+      do* Instr.Store (Register.read "t5") (Register.read "t8") in
       let* "t9" := Instr.UnOp "*" (Register.read "t4") in
       let* "t10" := Instr.MakeInterface (Register.read "t9") in
       M.Return [(Register.read "t10")]
@@ -1724,27 +1733,27 @@ with MakeFloat64 : Function.t :=
     (5,
       let* "t11" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.floatVal" in
       let* "t12" := Instr.FieldAddr (Register.read "t11") 0 in
-      let* "t13" := Instr.Call (CallKind.Function newFloat) [] in
+      let* "t13" := Instr.Call (CallKind.Function (newFloat [])) in
       let* "t14" := Instr.BinOp x "+" TODO_constant in
-      let* "t15" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t13"); (Register.read "t14")] in
-      let* _ := Instr.Store (Register.read "t12") (Register.read "t15") in
+      let* "t15" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t13"); (Register.read "t14")])) in
+      do* Instr.Store (Register.read "t12") (Register.read "t15") in
       let* "t16" := Instr.UnOp "*" (Register.read "t11") in
       let* "t17" := Instr.MakeInterface (Register.read "t16") in
       M.Return [(Register.read "t17")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with MakeFromBytes : Function.t :=
-  Function.Body (fun α =>
+with MakeFromBytes (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [bytes] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function len) [bytes] in
+  | [bytes] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (len [bytes])) in
       let* "t1" := Instr.BinOp (Register.read "t0") "+" TODO_constant in
       let* "t2" := Instr.BinOp (Register.read "t1") "/" TODO_constant in
       let* "t3" := Instr.MakeSlice (Register.read "t2") (Register.read "t2") in
-      let* "t4" := Instr.Call (CallKind.Function len) [bytes] in
+      let* "t4" := Instr.Call (CallKind.Function (len [bytes])) in
       Instr.Jump 1
     );
     (1,
@@ -1767,19 +1776,19 @@ with MakeFromBytes : Function.t :=
       Instr.If (Register.read "t17") 4 1
     );
     (3,
-      let* "t18" := Instr.Call (CallKind.Function len) [(Register.read "t3")] in
+      let* "t18" := Instr.Call (CallKind.Function (len [(Register.read "t3")])) in
       let* "t19" := Instr.BinOp (Register.read "t5") "<" (Register.read "t18") in
       Instr.If (Register.read "t19") 5 8
     );
     (4,
       let* "t20" := Instr.IndexAddr (Register.read "t3") (Register.read "t5") in
-      let* _ := Instr.Store (Register.read "t20") (Register.read "t15") in
+      do* Instr.Store (Register.read "t20") (Register.read "t15") in
       let* "t21" := Instr.BinOp (Register.read "t5") "+" TODO_constant in
       Instr.Jump 1
     );
     (5,
       let* "t22" := Instr.IndexAddr (Register.read "t3") (Register.read "t5") in
-      let* _ := Instr.Store (Register.read "t22") (Register.read "t6") in
+      do* Instr.Store (Register.read "t22") (Register.read "t6") in
       let* "t23" := Instr.BinOp (Register.read "t5") "+" TODO_constant in
       Instr.Jump 8
     );
@@ -1788,10 +1797,10 @@ with MakeFromBytes : Function.t :=
       Instr.Jump 8
     );
     (7,
-      let* "t25" := Instr.Call (CallKind.Function newInt) [] in
+      let* "t25" := Instr.Call (CallKind.Function (newInt [])) in
       let* "t26" := Instr.Slice (Register.read "t3") None (Some (Register.read "t29")) in
-      let* "t27" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t25"); (Register.read "t26")] in
-      let* "t28" := Instr.Call (CallKind.Function makeInt) [(Register.read "t27")] in
+      let* "t27" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t25"); (Register.read "t26")])) in
+      let* "t28" := Instr.Call (CallKind.Function (makeInt [(Register.read "t27")])) in
       M.Return [(Register.read "t28")]
     );
     (8,
@@ -1805,15 +1814,15 @@ with MakeFromBytes : Function.t :=
       let* "t33" := Instr.UnOp "*" (Register.read "t32") in
       let* "t34" := Instr.BinOp (Register.read "t33") "==" TODO_constant in
       Instr.If (Register.read "t34") 6 7
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with MakeFromLiteral : Function.t :=
-  Function.Body (fun α =>
+with MakeFromLiteral (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [lit; tok; zero] =>
-    [(0,
+  | [lit; tok; zero] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.BinOp zero "!=" TODO_constant in
       Instr.If (Register.read "t0") 1 2
     );
@@ -1830,14 +1839,14 @@ with MakeFromLiteral : Function.t :=
       M.Return [(Register.read "t3")]
     );
     (4,
-      let* "t4" := Instr.Call (CallKind.Function strconv.ParseInt) [lit; TODO_constant; TODO_constant] in
+      let* "t4" := Instr.Call (CallKind.Function (strconv.ParseInt [lit; TODO_constant; TODO_constant])) in
       let* "t5" := Instr.Extract (Register.read "t4") 0 in
       let* "t6" := Instr.Extract (Register.read "t4") 1 in
       let* "t7" := Instr.BinOp (Register.read "t6") "==" TODO_constant in
       Instr.If (Register.read "t7") 7 8
     );
     (5,
-      let* "t8" := Instr.Call (CallKind.Function makeFloatFromLiteral) [lit] in
+      let* "t8" := Instr.Call (CallKind.Function (makeFloatFromLiteral [lit])) in
       let* "t9" := Instr.BinOp (Register.read "t8") "!=" TODO_constant in
       Instr.If (Register.read "t9") 12 3
     );
@@ -1851,8 +1860,8 @@ with MakeFromLiteral : Function.t :=
       M.Return [(Register.read "t12")]
     );
     (8,
-      let* "t13" := Instr.Call (CallKind.Function newInt) [] in
-      let* "t14" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t13"); lit; TODO_constant] in
+      let* "t13" := Instr.Call (CallKind.Function (newInt [])) in
+      let* "t14" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t13"); lit; TODO_constant])) in
       let* "t15" := Instr.Extract (Register.read "t14") 0 in
       let* "t16" := Instr.Extract (Register.read "t14") 1 in
       Instr.If (Register.read "t16") 9 3
@@ -1860,13 +1869,13 @@ with MakeFromLiteral : Function.t :=
     (9,
       let* "t17" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.intVal" in
       let* "t18" := Instr.FieldAddr (Register.read "t17") 0 in
-      let* _ := Instr.Store (Register.read "t18") (Register.read "t15") in
+      do* Instr.Store (Register.read "t18") (Register.read "t15") in
       let* "t19" := Instr.UnOp "*" (Register.read "t17") in
       let* "t20" := Instr.MakeInterface (Register.read "t19") in
       M.Return [(Register.read "t20")]
     );
     (10,
-      let* "t21" := Instr.Call (CallKind.Function len) [lit] in
+      let* "t21" := Instr.Call (CallKind.Function (len [lit])) in
       let* "t22" := Instr.BinOp (Register.read "t21") ">" TODO_constant in
       Instr.If (Register.read "t22") 16 3
     );
@@ -1878,7 +1887,7 @@ with MakeFromLiteral : Function.t :=
       M.Return [(Register.read "t8")]
     );
     (13,
-      let* "t24" := Instr.Call (CallKind.Function len) [lit] in
+      let* "t24" := Instr.Call (CallKind.Function (len [lit])) in
       let* "t25" := Instr.BinOp (Register.read "t24") ">=" TODO_constant in
       Instr.If (Register.read "t25") 20 3
     );
@@ -1889,7 +1898,7 @@ with MakeFromLiteral : Function.t :=
     (15,
       let* "t27" := Instr.BinOp (Register.read "t21") "-" TODO_constant in
       let* "t28" := Instr.Slice lit None (Some (Register.read "t27")) in
-      let* "t29" := Instr.Call (CallKind.Function makeFloatFromLiteral) [(Register.read "t28")] in
+      let* "t29" := Instr.Call (CallKind.Function (makeFloatFromLiteral [(Register.read "t28")])) in
       let* "t30" := Instr.BinOp (Register.read "t29") "!=" TODO_constant in
       Instr.If (Register.read "t30") 17 3
     );
@@ -1901,11 +1910,11 @@ with MakeFromLiteral : Function.t :=
     );
     (17,
       let* "t34" := Instr.MakeInterface TODO_constant in
-      let* "t35" := Instr.Call (CallKind.Function makeComplex) [(Register.read "t34"); (Register.read "t29")] in
+      let* "t35" := Instr.Call (CallKind.Function (makeComplex [(Register.read "t34"); (Register.read "t29")])) in
       M.Return [(Register.read "t35")]
     );
     (18,
-      let* "t36" := Instr.Call (CallKind.Function strconv.Unquote) [lit] in
+      let* "t36" := Instr.Call (CallKind.Function (strconv.Unquote [lit])) in
       let* "t37" := Instr.Extract (Register.read "t36") 0 in
       let* "t38" := Instr.Extract (Register.read "t36") 1 in
       let* "t39" := Instr.BinOp (Register.read "t38") "==" TODO_constant in
@@ -1918,7 +1927,7 @@ with MakeFromLiteral : Function.t :=
     (20,
       let* "t41" := Instr.BinOp (Register.read "t24") "-" TODO_constant in
       let* "t42" := Instr.Slice lit (Some TODO_constant) (Some (Register.read "t41")) in
-      let* "t43" := Instr.Call (CallKind.Function strconv.UnquoteChar) [(Register.read "t42"); TODO_constant] in
+      let* "t43" := Instr.Call (CallKind.Function (strconv.UnquoteChar [(Register.read "t42"); TODO_constant])) in
       let* "t44" := Instr.Extract (Register.read "t43") 0 in
       let* "t45" := Instr.Extract (Register.read "t43") 1 in
       let* "t46" := Instr.Extract (Register.read "t43") 2 in
@@ -1928,31 +1937,31 @@ with MakeFromLiteral : Function.t :=
     );
     (21,
       let* "t49" := Instr.Convert (Register.read "t44") in
-      let* "t50" := Instr.Call (CallKind.Function MakeInt64) [(Register.read "t49")] in
+      let* "t50" := Instr.Call (CallKind.Function (MakeInt64 [(Register.read "t49")])) in
       M.Return [(Register.read "t50")]
     );
     (22,
       let* "t51" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t52" := Instr.IndexAddr (Register.read "t51") TODO_constant in
       let* "t53" := Instr.MakeInterface tok in
-      let* _ := Instr.Store (Register.read "t52") (Register.read "t53") in
+      do* Instr.Store (Register.read "t52") (Register.read "t53") in
       let* "t54" := Instr.Slice (Register.read "t51") None None in
-      let* "t55" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t54")] in
+      let* "t55" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t54")])) in
       let* "t56" := Instr.MakeInterface (Register.read "t55") in
       Instr.Panic (Register.read "t56")
     );
     (23,
-      let* "t57" := Instr.Call (CallKind.Function MakeString) [(Register.read "t37")] in
+      let* "t57" := Instr.Call (CallKind.Function (MakeString [(Register.read "t37")])) in
       M.Return [(Register.read "t57")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with MakeImag : Function.t :=
-  Function.Body (fun α =>
+with MakeImag (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.unknownVal" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -1969,7 +1978,7 @@ with MakeImag : Function.t :=
     );
     (3,
       let* "t6" := Instr.MakeInterface TODO_constant in
-      let* "t7" := Instr.Call (CallKind.Function makeComplex) [(Register.read "t6"); x] in
+      let* "t7" := Instr.Call (CallKind.Function (makeComplex [(Register.read "t6"); x])) in
       M.Return [(Register.read "t7")]
     );
     (4,
@@ -1994,32 +2003,32 @@ with MakeImag : Function.t :=
       let* "t17" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t18" := Instr.IndexAddr (Register.read "t17") TODO_constant in
       let* "t19" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t18") (Register.read "t19") in
+      do* Instr.Store (Register.read "t18") (Register.read "t19") in
       let* "t20" := Instr.Slice (Register.read "t17") None None in
-      let* "t21" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t20")] in
+      let* "t21" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t20")])) in
       let* "t22" := Instr.MakeInterface (Register.read "t21") in
       Instr.Panic (Register.read "t22")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with MakeInt64 : Function.t :=
-  Function.Body (fun α =>
+with MakeInt64 (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.ChangeType x in
       let* "t1" := Instr.MakeInterface (Register.read "t0") in
       M.Return [(Register.read "t1")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with MakeString : Function.t :=
-  Function.Body (fun α =>
+with MakeString (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [s] =>
-    [(0,
+  | [s] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.BinOp s "==" TODO_constant in
       Instr.If (Register.read "t0") 1 2
     );
@@ -2030,18 +2039,18 @@ with MakeString : Function.t :=
     (2,
       let* "t2" := Instr.Alloc (* complit *) Alloc.Heap "*go/constant.stringVal" in
       let* "t3" := Instr.FieldAddr (Register.read "t2") 1 in
-      let* _ := Instr.Store (Register.read "t3") s in
+      do* Instr.Store (Register.read "t3") s in
       let* "t4" := Instr.MakeInterface (Register.read "t2") in
       M.Return [(Register.read "t4")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with MakeUint64 : Function.t :=
-  Function.Body (fun α =>
+with MakeUint64 (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.BinOp x "<" TODO_constant in
       Instr.If (Register.read "t0") 1 2
     );
@@ -2054,32 +2063,32 @@ with MakeUint64 : Function.t :=
     (2,
       let* "t4" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.intVal" in
       let* "t5" := Instr.FieldAddr (Register.read "t4") 0 in
-      let* "t6" := Instr.Call (CallKind.Function newInt) [] in
-      let* "t7" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t6"); x] in
-      let* _ := Instr.Store (Register.read "t5") (Register.read "t7") in
+      let* "t6" := Instr.Call (CallKind.Function (newInt [])) in
+      let* "t7" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t6"); x])) in
+      do* Instr.Store (Register.read "t5") (Register.read "t7") in
       let* "t8" := Instr.UnOp "*" (Register.read "t4") in
       let* "t9" := Instr.MakeInterface (Register.read "t8") in
       M.Return [(Register.read "t9")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with MakeUnknown : Function.t :=
-  Function.Body (fun α =>
+with MakeUnknown (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [] =>
-    [(0,
+  | [] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.MakeInterface TODO_constant in
       M.Return [(Register.read "t0")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Num : Function.t :=
-  Function.Body (fun α =>
+with Num (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -2106,11 +2115,11 @@ with Num : Function.t :=
     );
     (5,
       let* "t10" := Instr.Alloc (* x *) Alloc.Local "*go/constant.ratVal" in
-      let* _ := Instr.Store (Register.read "t10") (Register.read "t8") in
+      do* Instr.Store (Register.read "t10") (Register.read "t8") in
       let* "t11" := Instr.FieldAddr (Register.read "t10") 0 in
       let* "t12" := Instr.UnOp "*" (Register.read "t11") in
-      let* "t13" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t12")] in
-      let* "t14" := Instr.Call (CallKind.Function makeInt) [(Register.read "t13")] in
+      let* "t13" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t12")])) in
+      let* "t14" := Instr.Call (CallKind.Function (makeInt [(Register.read "t13")])) in
       M.Return [(Register.read "t14")]
     );
     (6,
@@ -2121,10 +2130,10 @@ with Num : Function.t :=
     );
     (7,
       let* "t18" := Instr.Alloc (* x *) Alloc.Local "*go/constant.floatVal" in
-      let* _ := Instr.Store (Register.read "t18") (Register.read "t16") in
+      do* Instr.Store (Register.read "t18") (Register.read "t16") in
       let* "t19" := Instr.FieldAddr (Register.read "t18") 0 in
       let* "t20" := Instr.UnOp "*" (Register.read "t19") in
-      let* "t21" := Instr.Call (CallKind.Function smallFloat) [(Register.read "t20")] in
+      let* "t21" := Instr.Call (CallKind.Function (smallFloat [(Register.read "t20")])) in
       Instr.If (Register.read "t21") 9 1
     );
     (8,
@@ -2136,11 +2145,11 @@ with Num : Function.t :=
     (9,
       let* "t25" := Instr.FieldAddr (Register.read "t18") 0 in
       let* "t26" := Instr.UnOp "*" (Register.read "t25") in
-      let* "t27" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t26"); TODO_constant] in
+      let* "t27" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t26"); TODO_constant])) in
       let* "t28" := Instr.Extract (Register.read "t27") 0 in
       let* "t29" := Instr.Extract (Register.read "t27") 1 in
-      let* "t30" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t28")] in
-      let* "t31" := Instr.Call (CallKind.Function makeInt) [(Register.read "t30")] in
+      let* "t30" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t28")])) in
+      let* "t31" := Instr.Call (CallKind.Function (makeInt [(Register.read "t30")])) in
       M.Return [(Register.read "t31")]
     );
     (10,
@@ -2150,20 +2159,20 @@ with Num : Function.t :=
       let* "t32" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t33" := Instr.IndexAddr (Register.read "t32") TODO_constant in
       let* "t34" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t33") (Register.read "t34") in
+      do* Instr.Store (Register.read "t33") (Register.read "t34") in
       let* "t35" := Instr.Slice (Register.read "t32") None None in
-      let* "t36" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t35")] in
+      let* "t36" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t35")])) in
       let* "t37" := Instr.MakeInterface (Register.read "t36") in
       Instr.Panic (Register.read "t37")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Real : Function.t :=
-  Function.Body (fun α =>
+with Real (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.unknownVal" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -2204,7 +2213,7 @@ with Real : Function.t :=
     );
     (7,
       let* "t18" := Instr.Alloc (* x *) Alloc.Local "*go/constant.complexVal" in
-      let* _ := Instr.Store (Register.read "t18") (Register.read "t16") in
+      do* Instr.Store (Register.read "t18") (Register.read "t16") in
       let* "t19" := Instr.FieldAddr (Register.read "t18") 0 in
       let* "t20" := Instr.UnOp "*" (Register.read "t19") in
       M.Return [(Register.read "t20")]
@@ -2213,20 +2222,20 @@ with Real : Function.t :=
       let* "t21" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t22" := Instr.IndexAddr (Register.read "t21") TODO_constant in
       let* "t23" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t22") (Register.read "t23") in
+      do* Instr.Store (Register.read "t22") (Register.read "t23") in
       let* "t24" := Instr.Slice (Register.read "t21") None None in
-      let* "t25" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t24")] in
+      let* "t25" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t24")])) in
       let* "t26" := Instr.MakeInterface (Register.read "t25") in
       Instr.Panic (Register.read "t26")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Shift : Function.t :=
-  Function.Body (fun α =>
+with Shift (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x; op; s] =>
-    [(0,
+  | [x; op; s] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.unknownVal" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -2236,15 +2245,15 @@ with Shift : Function.t :=
       let* "t3" := Instr.Alloc (* varargs *) Alloc.Heap "*[3]any" in
       let* "t4" := Instr.IndexAddr (Register.read "t3") TODO_constant in
       let* "t5" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t4") (Register.read "t5") in
+      do* Instr.Store (Register.read "t4") (Register.read "t5") in
       let* "t6" := Instr.IndexAddr (Register.read "t3") TODO_constant in
       let* "t7" := Instr.MakeInterface op in
-      let* _ := Instr.Store (Register.read "t6") (Register.read "t7") in
+      do* Instr.Store (Register.read "t6") (Register.read "t7") in
       let* "t8" := Instr.IndexAddr (Register.read "t3") TODO_constant in
       let* "t9" := Instr.MakeInterface s in
-      let* _ := Instr.Store (Register.read "t8") (Register.read "t9") in
+      do* Instr.Store (Register.read "t8") (Register.read "t9") in
       let* "t10" := Instr.Slice (Register.read "t3") None None in
-      let* "t11" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t10")] in
+      let* "t11" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t10")])) in
       let* "t12" := Instr.MakeInterface (Register.read "t11") in
       Instr.Panic (Register.read "t12")
     );
@@ -2277,10 +2286,10 @@ with Shift : Function.t :=
       Instr.If (Register.read "t22") 8 10
     );
     (8,
-      let* "t23" := Instr.Call (CallKind.Function i64toi) [(Register.read "t15")] in
+      let* "t23" := Instr.Call (CallKind.Function (i64toi [(Register.read "t15")])) in
       let* "t24" := Instr.Field (Register.read "t23") 0 in
-      let* "t25" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t24"); (Register.read "t24"); s] in
-      let* "t26" := Instr.Call (CallKind.Function makeInt) [(Register.read "t25")] in
+      let* "t25" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t24"); (Register.read "t24"); s])) in
+      let* "t26" := Instr.Call (CallKind.Function (makeInt [(Register.read "t25")])) in
       M.Return [(Register.read "t26")]
     );
     (9,
@@ -2294,7 +2303,7 @@ with Shift : Function.t :=
     );
     (11,
       let* "t30" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t30") (Register.read "t19") in
+      do* Instr.Store (Register.read "t30") (Register.read "t19") in
       let* "t31" := Instr.BinOp s "==" TODO_constant in
       Instr.If (Register.read "t31") 12 13
     );
@@ -2304,36 +2313,36 @@ with Shift : Function.t :=
       M.Return [(Register.read "t33")]
     );
     (13,
-      let* "t34" := Instr.Call (CallKind.Function newInt) [] in
+      let* "t34" := Instr.Call (CallKind.Function (newInt [])) in
       let* "t35" := Instr.BinOp op "==" TODO_constant in
       Instr.If (Register.read "t35") 14 16
     );
     (14,
       let* "t36" := Instr.FieldAddr (Register.read "t30") 0 in
       let* "t37" := Instr.UnOp "*" (Register.read "t36") in
-      let* "t38" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t34"); (Register.read "t37"); s] in
-      let* "t39" := Instr.Call (CallKind.Function makeInt) [(Register.read "t38")] in
+      let* "t38" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t34"); (Register.read "t37"); s])) in
+      let* "t39" := Instr.Call (CallKind.Function (makeInt [(Register.read "t38")])) in
       M.Return [(Register.read "t39")]
     );
     (15,
       let* "t40" := Instr.FieldAddr (Register.read "t30") 0 in
       let* "t41" := Instr.UnOp "*" (Register.read "t40") in
-      let* "t42" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t34"); (Register.read "t41"); s] in
-      let* "t43" := Instr.Call (CallKind.Function makeInt) [(Register.read "t42")] in
+      let* "t42" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t34"); (Register.read "t41"); s])) in
+      let* "t43" := Instr.Call (CallKind.Function (makeInt [(Register.read "t42")])) in
       M.Return [(Register.read "t43")]
     );
     (16,
       let* "t44" := Instr.BinOp op "==" TODO_constant in
       Instr.If (Register.read "t44") 15 1
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Sign : Function.t :=
-  Function.Body (fun α =>
+with Sign (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -2364,10 +2373,10 @@ with Sign : Function.t :=
     );
     (7,
       let* "t8" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t8") (Register.read "t5") in
+      do* Instr.Store (Register.read "t8") (Register.read "t5") in
       let* "t9" := Instr.FieldAddr (Register.read "t8") 0 in
       let* "t10" := Instr.UnOp "*" (Register.read "t9") in
-      let* "t11" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t10")] in
+      let* "t11" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t10")])) in
       M.Return [(Register.read "t11")]
     );
     (8,
@@ -2378,10 +2387,10 @@ with Sign : Function.t :=
     );
     (9,
       let* "t15" := Instr.Alloc (* x *) Alloc.Local "*go/constant.ratVal" in
-      let* _ := Instr.Store (Register.read "t15") (Register.read "t13") in
+      do* Instr.Store (Register.read "t15") (Register.read "t13") in
       let* "t16" := Instr.FieldAddr (Register.read "t15") 0 in
       let* "t17" := Instr.UnOp "*" (Register.read "t16") in
-      let* "t18" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t17")] in
+      let* "t18" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t17")])) in
       M.Return [(Register.read "t18")]
     );
     (10,
@@ -2392,10 +2401,10 @@ with Sign : Function.t :=
     );
     (11,
       let* "t22" := Instr.Alloc (* x *) Alloc.Local "*go/constant.floatVal" in
-      let* _ := Instr.Store (Register.read "t22") (Register.read "t20") in
+      do* Instr.Store (Register.read "t22") (Register.read "t20") in
       let* "t23" := Instr.FieldAddr (Register.read "t22") 0 in
       let* "t24" := Instr.UnOp "*" (Register.read "t23") in
-      let* "t25" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t24")] in
+      let* "t25" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t24")])) in
       M.Return [(Register.read "t25")]
     );
     (12,
@@ -2406,13 +2415,13 @@ with Sign : Function.t :=
     );
     (13,
       let* "t29" := Instr.Alloc (* x *) Alloc.Local "*go/constant.complexVal" in
-      let* _ := Instr.Store (Register.read "t29") (Register.read "t27") in
+      do* Instr.Store (Register.read "t29") (Register.read "t27") in
       let* "t30" := Instr.FieldAddr (Register.read "t29") 0 in
       let* "t31" := Instr.UnOp "*" (Register.read "t30") in
-      let* "t32" := Instr.Call (CallKind.Function Sign) [(Register.read "t31")] in
+      let* "t32" := Instr.Call (CallKind.Function (Sign [(Register.read "t31")])) in
       let* "t33" := Instr.FieldAddr (Register.read "t29") 1 in
       let* "t34" := Instr.UnOp "*" (Register.read "t33") in
-      let* "t35" := Instr.Call (CallKind.Function Sign) [(Register.read "t34")] in
+      let* "t35" := Instr.Call (CallKind.Function (Sign [(Register.read "t34")])) in
       let* "t36" := Instr.BinOp (Register.read "t32") "|" (Register.read "t35") in
       M.Return [(Register.read "t36")]
     );
@@ -2429,27 +2438,27 @@ with Sign : Function.t :=
       let* "t40" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t41" := Instr.IndexAddr (Register.read "t40") TODO_constant in
       let* "t42" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t41") (Register.read "t42") in
+      do* Instr.Store (Register.read "t41") (Register.read "t42") in
       let* "t43" := Instr.Slice (Register.read "t40") None None in
-      let* "t44" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t43")] in
+      let* "t44" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t43")])) in
       let* "t45" := Instr.MakeInterface (Register.read "t44") in
       Instr.Panic (Register.read "t45")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with StringVal : Function.t :=
-  Function.Body (fun α =>
+with StringVal (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "*go/constant.stringVal" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
       Instr.If (Register.read "t2") 1 2
     );
     (1,
-      let* "t3" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t1")] in
+      let* "t3" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t1")])) in
       M.Return [(Register.read "t3")]
     );
     (2,
@@ -2465,27 +2474,27 @@ with StringVal : Function.t :=
       let* "t7" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t8" := Instr.IndexAddr (Register.read "t7") TODO_constant in
       let* "t9" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t8") (Register.read "t9") in
+      do* Instr.Store (Register.read "t8") (Register.read "t9") in
       let* "t10" := Instr.Slice (Register.read "t7") None None in
-      let* "t11" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t10")] in
+      let* "t11" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t10")])) in
       let* "t12" := Instr.MakeInterface (Register.read "t11") in
       Instr.Panic (Register.read "t12")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with ToComplex : Function.t :=
-  Function.Body (fun α =>
+with ToComplex (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
       Instr.If (Register.read "t2") 1 2
     );
     (1,
-      let* "t3" := Instr.Call (CallKind.Function vtoc) [x] in
+      let* "t3" := Instr.Call (CallKind.Function (vtoc [x])) in
       let* "t4" := Instr.MakeInterface (Register.read "t3") in
       M.Return [(Register.read "t4")]
     );
@@ -2520,15 +2529,15 @@ with ToComplex : Function.t :=
     (7,
       let* "t18" := Instr.MakeInterface TODO_constant in
       M.Return [(Register.read "t18")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with ToFloat : Function.t :=
-  Function.Body (fun α =>
+with ToFloat (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -2539,7 +2548,7 @@ with ToFloat : Function.t :=
       M.Return [(Register.read "t3")]
     );
     (2,
-      let* "t4" := Instr.Call (CallKind.Function i64tor) [(Register.read "t1")] in
+      let* "t4" := Instr.Call (CallKind.Function (i64tor [(Register.read "t1")])) in
       let* "t5" := Instr.MakeInterface (Register.read "t4") in
       M.Return [(Register.read "t5")]
     );
@@ -2551,10 +2560,10 @@ with ToFloat : Function.t :=
     );
     (4,
       let* "t9" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t9") (Register.read "t7") in
+      do* Instr.Store (Register.read "t9") (Register.read "t7") in
       let* "t10" := Instr.FieldAddr (Register.read "t9") 0 in
       let* "t11" := Instr.UnOp "*" (Register.read "t10") in
-      let* "t12" := Instr.Call (CallKind.Function smallInt) [(Register.read "t11")] in
+      let* "t12" := Instr.Call (CallKind.Function (smallInt [(Register.read "t11")])) in
       Instr.If (Register.read "t12") 6 7
     );
     (5,
@@ -2565,13 +2574,13 @@ with ToFloat : Function.t :=
     );
     (6,
       let* "t16" := Instr.UnOp "*" (Register.read "t9") in
-      let* "t17" := Instr.Call (CallKind.Function itor) [(Register.read "t16")] in
+      let* "t17" := Instr.Call (CallKind.Function (itor [(Register.read "t16")])) in
       let* "t18" := Instr.MakeInterface (Register.read "t17") in
       M.Return [(Register.read "t18")]
     );
     (7,
       let* "t19" := Instr.UnOp "*" (Register.read "t9") in
-      let* "t20" := Instr.Call (CallKind.Function itof) [(Register.read "t19")] in
+      let* "t20" := Instr.Call (CallKind.Function (itof [(Register.read "t19")])) in
       let* "t21" := Instr.MakeInterface (Register.read "t20") in
       M.Return [(Register.read "t21")]
     );
@@ -2592,27 +2601,27 @@ with ToFloat : Function.t :=
     );
     (11,
       let* "t28" := Instr.Alloc (* x *) Alloc.Local "*go/constant.complexVal" in
-      let* _ := Instr.Store (Register.read "t28") (Register.read "t26") in
+      do* Instr.Store (Register.read "t28") (Register.read "t26") in
       let* "t29" := Instr.FieldAddr (Register.read "t28") 1 in
       let* "t30" := Instr.UnOp "*" (Register.read "t29") in
-      let* "t31" := Instr.Call (CallKind.Function Sign) [(Register.read "t30")] in
+      let* "t31" := Instr.Call (CallKind.Function (Sign [(Register.read "t30")])) in
       let* "t32" := Instr.BinOp (Register.read "t31") "==" TODO_constant in
       Instr.If (Register.read "t32") 12 1
     );
     (12,
       let* "t33" := Instr.FieldAddr (Register.read "t28") 0 in
       let* "t34" := Instr.UnOp "*" (Register.read "t33") in
-      let* "t35" := Instr.Call (CallKind.Function ToFloat) [(Register.read "t34")] in
+      let* "t35" := Instr.Call (CallKind.Function (ToFloat [(Register.read "t34")])) in
       M.Return [(Register.read "t35")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with ToInt : Function.t :=
-  Function.Body (fun α =>
+with ToInt (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -2639,10 +2648,10 @@ with ToInt : Function.t :=
     );
     (5,
       let* "t10" := Instr.Alloc (* x *) Alloc.Local "*go/constant.ratVal" in
-      let* _ := Instr.Store (Register.read "t10") (Register.read "t8") in
+      do* Instr.Store (Register.read "t10") (Register.read "t8") in
       let* "t11" := Instr.FieldAddr (Register.read "t10") 0 in
       let* "t12" := Instr.UnOp "*" (Register.read "t11") in
-      let* "t13" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t12")] in
+      let* "t13" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t12")])) in
       Instr.If (Register.read "t13") 7 1
     );
     (6,
@@ -2654,16 +2663,16 @@ with ToInt : Function.t :=
     (7,
       let* "t17" := Instr.FieldAddr (Register.read "t10") 0 in
       let* "t18" := Instr.UnOp "*" (Register.read "t17") in
-      let* "t19" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t18")] in
-      let* "t20" := Instr.Call (CallKind.Function makeInt) [(Register.read "t19")] in
+      let* "t19" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t18")])) in
+      let* "t20" := Instr.Call (CallKind.Function (makeInt [(Register.read "t19")])) in
       M.Return [(Register.read "t20")]
     );
     (8,
       let* "t21" := Instr.Alloc (* x *) Alloc.Local "*go/constant.floatVal" in
-      let* _ := Instr.Store (Register.read "t21") (Register.read "t15") in
+      do* Instr.Store (Register.read "t21") (Register.read "t15") in
       let* "t22" := Instr.FieldAddr (Register.read "t21") 0 in
       let* "t23" := Instr.UnOp "*" (Register.read "t22") in
-      let* "t24" := Instr.Call (CallKind.Function smallFloat) [(Register.read "t23")] in
+      let* "t24" := Instr.Call (CallKind.Function (smallFloat [(Register.read "t23")])) in
       Instr.If (Register.read "t24") 10 1
     );
     (9,
@@ -2673,70 +2682,70 @@ with ToInt : Function.t :=
       Instr.If (Register.read "t27") 16 1
     );
     (10,
-      let* "t28" := Instr.Call (CallKind.Function newInt) [] in
+      let* "t28" := Instr.Call (CallKind.Function (newInt [])) in
       let* "t29" := Instr.FieldAddr (Register.read "t21") 0 in
       let* "t30" := Instr.UnOp "*" (Register.read "t29") in
-      let* "t31" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t30"); (Register.read "t28")] in
+      let* "t31" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t30"); (Register.read "t28")])) in
       let* "t32" := Instr.Extract (Register.read "t31") 0 in
       let* "t33" := Instr.Extract (Register.read "t31") 1 in
       let* "t34" := Instr.BinOp (Register.read "t33") "==" TODO_constant in
       Instr.If (Register.read "t34") 11 12
     );
     (11,
-      let* "t35" := Instr.Call (CallKind.Function makeInt) [(Register.read "t28")] in
+      let* "t35" := Instr.Call (CallKind.Function (makeInt [(Register.read "t28")])) in
       M.Return [(Register.read "t35")]
     );
     (12,
       let* "t36" := Instr.Alloc (* t *) Alloc.Heap "*math/big.Float" in
-      let* "t37" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t36"); TODO_constant] in
-      let* "t38" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t36"); TODO_constant] in
+      let* "t37" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t36"); TODO_constant])) in
+      let* "t38" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t36"); TODO_constant])) in
       let* "t39" := Instr.FieldAddr (Register.read "t21") 0 in
       let* "t40" := Instr.UnOp "*" (Register.read "t39") in
-      let* "t41" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t36"); (Register.read "t40")] in
-      let* "t42" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t36"); (Register.read "t28")] in
+      let* "t41" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t36"); (Register.read "t40")])) in
+      let* "t42" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t36"); (Register.read "t28")])) in
       let* "t43" := Instr.Extract (Register.read "t42") 0 in
       let* "t44" := Instr.Extract (Register.read "t42") 1 in
       let* "t45" := Instr.BinOp (Register.read "t44") "==" TODO_constant in
       Instr.If (Register.read "t45") 13 14
     );
     (13,
-      let* "t46" := Instr.Call (CallKind.Function makeInt) [(Register.read "t28")] in
+      let* "t46" := Instr.Call (CallKind.Function (makeInt [(Register.read "t28")])) in
       M.Return [(Register.read "t46")]
     );
     (14,
-      let* "t47" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t36"); TODO_constant] in
+      let* "t47" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t36"); TODO_constant])) in
       let* "t48" := Instr.FieldAddr (Register.read "t21") 0 in
       let* "t49" := Instr.UnOp "*" (Register.read "t48") in
-      let* "t50" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t36"); (Register.read "t49")] in
-      let* "t51" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t36"); (Register.read "t28")] in
+      let* "t50" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t36"); (Register.read "t49")])) in
+      let* "t51" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t36"); (Register.read "t28")])) in
       let* "t52" := Instr.Extract (Register.read "t51") 0 in
       let* "t53" := Instr.Extract (Register.read "t51") 1 in
       let* "t54" := Instr.BinOp (Register.read "t53") "==" TODO_constant in
       Instr.If (Register.read "t54") 15 1
     );
     (15,
-      let* "t55" := Instr.Call (CallKind.Function makeInt) [(Register.read "t28")] in
+      let* "t55" := Instr.Call (CallKind.Function (makeInt [(Register.read "t28")])) in
       M.Return [(Register.read "t55")]
     );
     (16,
       let* "t56" := Instr.MakeInterface (Register.read "t26") in
-      let* "t57" := Instr.Call (CallKind.Function ToFloat) [(Register.read "t56")] in
-      let* "t58" := Instr.Call (CallKind.Method (Register.read "t57") "Kind") [] in
+      let* "t57" := Instr.Call (CallKind.Function (ToFloat [(Register.read "t56")])) in
+      let* "t58" := Instr.Call (CallKind.Method (Register.read "t57") "Kind" []) in
       let* "t59" := Instr.BinOp (Register.read "t58") "==" TODO_constant in
       Instr.If (Register.read "t59") 17 1
     );
     (17,
-      let* "t60" := Instr.Call (CallKind.Function ToInt) [(Register.read "t57")] in
+      let* "t60" := Instr.Call (CallKind.Function (ToInt [(Register.read "t57")])) in
       M.Return [(Register.read "t60")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Uint64Val : Function.t :=
-  Function.Body (fun α =>
+with Uint64Val (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.int64Val" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -2755,13 +2764,13 @@ with Uint64Val : Function.t :=
     );
     (3,
       let* "t8" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t8") (Register.read "t6") in
+      do* Instr.Store (Register.read "t8") (Register.read "t6") in
       let* "t9" := Instr.FieldAddr (Register.read "t8") 0 in
       let* "t10" := Instr.UnOp "*" (Register.read "t9") in
-      let* "t11" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t10")] in
+      let* "t11" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t10")])) in
       let* "t12" := Instr.FieldAddr (Register.read "t8") 0 in
       let* "t13" := Instr.UnOp "*" (Register.read "t12") in
-      let* "t14" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t13")] in
+      let* "t14" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t13")])) in
       M.Return [(Register.read "t11"); (Register.read "t14")]
     );
     (4,
@@ -2777,20 +2786,20 @@ with Uint64Val : Function.t :=
       let* "t18" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
       let* "t19" := Instr.IndexAddr (Register.read "t18") TODO_constant in
       let* "t20" := Instr.ChangeInterface x in
-      let* _ := Instr.Store (Register.read "t19") (Register.read "t20") in
+      do* Instr.Store (Register.read "t19") (Register.read "t20") in
       let* "t21" := Instr.Slice (Register.read "t18") None None in
-      let* "t22" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t21")] in
+      let* "t22" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t21")])) in
       let* "t23" := Instr.MakeInterface (Register.read "t22") in
       Instr.Panic (Register.read "t23")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with UnaryOp : Function.t :=
-  Function.Body (fun α =>
+with UnaryOp (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [op; y; prec] =>
-    [(0,
+  | [op; y; prec] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.BinOp op "==" TODO_constant in
       Instr.If (Register.read "t0") 1 3
     );
@@ -2844,7 +2853,7 @@ with UnaryOp : Function.t :=
       Instr.If (Register.read "t22") 4 34
     );
     (10,
-      let* "t23" := Instr.Call (CallKind.Function newInt) [] in
+      let* "t23" := Instr.Call (CallKind.Function (newInt [])) in
       let* "t24" := Instr.TypeAssert y TypeAssert.CommaOk "go/constant.unknownVal" in
       let* "t25" := Instr.Extract (Register.read "t24") 0 in
       let* "t26" := Instr.Extract (Register.read "t24") 1 in
@@ -2880,21 +2889,21 @@ with UnaryOp : Function.t :=
       M.Return [(Register.read "t37")]
     );
     (17,
-      let* "t38" := Instr.Call (CallKind.Function newInt) [] in
+      let* "t38" := Instr.Call (CallKind.Function (newInt [])) in
       let* "t39" := Instr.ChangeType (Register.read "t30") in
-      let* "t40" := Instr.Call (CallKind.Function math.big.NewInt) [(Register.read "t39")] in
-      let* "t41" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t38"); (Register.read "t40")] in
-      let* "t42" := Instr.Call (CallKind.Function makeInt) [(Register.read "t41")] in
+      let* "t40" := Instr.Call (CallKind.Function (math.big.NewInt [(Register.read "t39")])) in
+      let* "t41" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t38"); (Register.read "t40")])) in
+      let* "t42" := Instr.Call (CallKind.Function (makeInt [(Register.read "t41")])) in
       M.Return [(Register.read "t42")]
     );
     (18,
       let* "t43" := Instr.Alloc (* y *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t43") (Register.read "t35") in
-      let* "t44" := Instr.Call (CallKind.Function newInt) [] in
+      do* Instr.Store (Register.read "t43") (Register.read "t35") in
+      let* "t44" := Instr.Call (CallKind.Function (newInt [])) in
       let* "t45" := Instr.FieldAddr (Register.read "t43") 0 in
       let* "t46" := Instr.UnOp "*" (Register.read "t45") in
-      let* "t47" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t44"); (Register.read "t46")] in
-      let* "t48" := Instr.Call (CallKind.Function makeInt) [(Register.read "t47")] in
+      let* "t47" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t44"); (Register.read "t46")])) in
+      let* "t48" := Instr.Call (CallKind.Function (makeInt [(Register.read "t47")])) in
       M.Return [(Register.read "t48")]
     );
     (19,
@@ -2905,12 +2914,12 @@ with UnaryOp : Function.t :=
     );
     (20,
       let* "t52" := Instr.Alloc (* y *) Alloc.Local "*go/constant.ratVal" in
-      let* _ := Instr.Store (Register.read "t52") (Register.read "t50") in
-      let* "t53" := Instr.Call (CallKind.Function newRat) [] in
+      do* Instr.Store (Register.read "t52") (Register.read "t50") in
+      let* "t53" := Instr.Call (CallKind.Function (newRat [])) in
       let* "t54" := Instr.FieldAddr (Register.read "t52") 0 in
       let* "t55" := Instr.UnOp "*" (Register.read "t54") in
-      let* "t56" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t53"); (Register.read "t55")] in
-      let* "t57" := Instr.Call (CallKind.Function makeRat) [(Register.read "t56")] in
+      let* "t56" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t53"); (Register.read "t55")])) in
+      let* "t57" := Instr.Call (CallKind.Function (makeRat [(Register.read "t56")])) in
       M.Return [(Register.read "t57")]
     );
     (21,
@@ -2921,12 +2930,12 @@ with UnaryOp : Function.t :=
     );
     (22,
       let* "t61" := Instr.Alloc (* y *) Alloc.Local "*go/constant.floatVal" in
-      let* _ := Instr.Store (Register.read "t61") (Register.read "t59") in
-      let* "t62" := Instr.Call (CallKind.Function newFloat) [] in
+      do* Instr.Store (Register.read "t61") (Register.read "t59") in
+      let* "t62" := Instr.Call (CallKind.Function (newFloat [])) in
       let* "t63" := Instr.FieldAddr (Register.read "t61") 0 in
       let* "t64" := Instr.UnOp "*" (Register.read "t63") in
-      let* "t65" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t62"); (Register.read "t64")] in
-      let* "t66" := Instr.Call (CallKind.Function makeFloat) [(Register.read "t65")] in
+      let* "t65" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t62"); (Register.read "t64")])) in
+      let* "t66" := Instr.Call (CallKind.Function (makeFloat [(Register.read "t65")])) in
       M.Return [(Register.read "t66")]
     );
     (23,
@@ -2937,14 +2946,14 @@ with UnaryOp : Function.t :=
     );
     (24,
       let* "t70" := Instr.Alloc (* y *) Alloc.Local "*go/constant.complexVal" in
-      let* _ := Instr.Store (Register.read "t70") (Register.read "t68") in
+      do* Instr.Store (Register.read "t70") (Register.read "t68") in
       let* "t71" := Instr.FieldAddr (Register.read "t70") 0 in
       let* "t72" := Instr.UnOp "*" (Register.read "t71") in
-      let* "t73" := Instr.Call (CallKind.Function UnaryOp) [TODO_constant; (Register.read "t72"); TODO_constant] in
+      let* "t73" := Instr.Call (CallKind.Function (UnaryOp [TODO_constant; (Register.read "t72"); TODO_constant])) in
       let* "t74" := Instr.FieldAddr (Register.read "t70") 1 in
       let* "t75" := Instr.UnOp "*" (Register.read "t74") in
-      let* "t76" := Instr.Call (CallKind.Function UnaryOp) [TODO_constant; (Register.read "t75"); TODO_constant] in
-      let* "t77" := Instr.Call (CallKind.Function makeComplex) [(Register.read "t73"); (Register.read "t76")] in
+      let* "t76" := Instr.Call (CallKind.Function (UnaryOp [TODO_constant; (Register.read "t75"); TODO_constant])) in
+      let* "t77" := Instr.Call (CallKind.Function (makeComplex [(Register.read "t73"); (Register.read "t76")])) in
       M.Return [(Register.read "t77")]
     );
     (25,
@@ -2973,8 +2982,8 @@ with UnaryOp : Function.t :=
     );
     (30,
       let* "t87" := Instr.ChangeType (Register.read "t85") in
-      let* "t88" := Instr.Call (CallKind.Function math.big.NewInt) [(Register.read "t87")] in
-      let* "t89" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t23"); (Register.read "t88")] in
+      let* "t88" := Instr.Call (CallKind.Function (math.big.NewInt [(Register.read "t87")])) in
+      let* "t89" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t23"); (Register.read "t88")])) in
       Instr.Jump 27
     );
     (31,
@@ -2985,10 +2994,10 @@ with UnaryOp : Function.t :=
     );
     (32,
       let* "t93" := Instr.Alloc (* y *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t93") (Register.read "t91") in
+      do* Instr.Store (Register.read "t93") (Register.read "t91") in
       let* "t94" := Instr.FieldAddr (Register.read "t93") 0 in
       let* "t95" := Instr.UnOp "*" (Register.read "t94") in
-      let* "t96" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t23"); (Register.read "t95")] in
+      let* "t96" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t23"); (Register.read "t95")])) in
       Instr.Jump 27
     );
     (33,
@@ -2998,24 +3007,24 @@ with UnaryOp : Function.t :=
       let* "t97" := Instr.Alloc (* varargs *) Alloc.Heap "*[2]any" in
       let* "t98" := Instr.IndexAddr (Register.read "t97") TODO_constant in
       let* "t99" := Instr.MakeInterface op in
-      let* _ := Instr.Store (Register.read "t98") (Register.read "t99") in
+      do* Instr.Store (Register.read "t98") (Register.read "t99") in
       let* "t100" := Instr.IndexAddr (Register.read "t97") TODO_constant in
       let* "t101" := Instr.ChangeInterface y in
-      let* _ := Instr.Store (Register.read "t100") (Register.read "t101") in
+      do* Instr.Store (Register.read "t100") (Register.read "t101") in
       let* "t102" := Instr.Slice (Register.read "t97") None None in
-      let* "t103" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t102")] in
+      let* "t103" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t102")])) in
       let* "t104" := Instr.MakeInterface (Register.read "t103") in
       Instr.Panic (Register.read "t104")
     );
     (35,
-      let* "t105" := Instr.Call (CallKind.Function newInt) [] in
-      let* "t106" := Instr.Call (CallKind.Function math.big.NewInt) [TODO_constant] in
-      let* "t107" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t105"); (Register.read "t106"); prec] in
-      let* "t108" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t23"); (Register.read "t23"); (Register.read "t107")] in
+      let* "t105" := Instr.Call (CallKind.Function (newInt [])) in
+      let* "t106" := Instr.Call (CallKind.Function (math.big.NewInt [TODO_constant])) in
+      let* "t107" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t105"); (Register.read "t106"); prec])) in
+      let* "t108" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t23"); (Register.read "t23"); (Register.read "t107")])) in
       Instr.Jump 36
     );
     (36,
-      let* "t109" := Instr.Call (CallKind.Function makeInt) [(Register.read "t23")] in
+      let* "t109" := Instr.Call (CallKind.Function (makeInt [(Register.read "t23")])) in
       M.Return [(Register.read "t109")]
     );
     (37,
@@ -3032,15 +3041,15 @@ with UnaryOp : Function.t :=
       let* "t114" := Instr.UnOp "!" (Register.read "t112") in
       let* "t115" := Instr.MakeInterface (Register.read "t114") in
       M.Return [(Register.read "t115")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with Val : Function.t :=
-  Function.Body (fun α =>
+with Val (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.boolVal" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -3058,7 +3067,7 @@ with Val : Function.t :=
       Instr.If (Register.read "t7") 3 4
     );
     (3,
-      let* "t8" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t6")] in
+      let* "t8" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t6")])) in
       let* "t9" := Instr.MakeInterface (Register.read "t8") in
       M.Return [(Register.read "t9")]
     );
@@ -3081,7 +3090,7 @@ with Val : Function.t :=
     );
     (7,
       let* "t18" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t18") (Register.read "t16") in
+      do* Instr.Store (Register.read "t18") (Register.read "t16") in
       let* "t19" := Instr.FieldAddr (Register.read "t18") 0 in
       let* "t20" := Instr.UnOp "*" (Register.read "t19") in
       let* "t21" := Instr.MakeInterface (Register.read "t20") in
@@ -3095,7 +3104,7 @@ with Val : Function.t :=
     );
     (9,
       let* "t25" := Instr.Alloc (* x *) Alloc.Local "*go/constant.ratVal" in
-      let* _ := Instr.Store (Register.read "t25") (Register.read "t23") in
+      do* Instr.Store (Register.read "t25") (Register.read "t23") in
       let* "t26" := Instr.FieldAddr (Register.read "t25") 0 in
       let* "t27" := Instr.UnOp "*" (Register.read "t26") in
       let* "t28" := Instr.MakeInterface (Register.read "t27") in
@@ -3109,7 +3118,7 @@ with Val : Function.t :=
     );
     (11,
       let* "t32" := Instr.Alloc (* x *) Alloc.Local "*go/constant.floatVal" in
-      let* _ := Instr.Store (Register.read "t32") (Register.read "t30") in
+      do* Instr.Store (Register.read "t32") (Register.read "t30") in
       let* "t33" := Instr.FieldAddr (Register.read "t32") 0 in
       let* "t34" := Instr.UnOp "*" (Register.read "t33") in
       let* "t35" := Instr.MakeInterface (Register.read "t34") in
@@ -3117,26 +3126,26 @@ with Val : Function.t :=
     );
     (12,
       M.Return [TODO_constant]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with add : Function.t :=
-  Function.Body (fun α =>
+with add (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x; y] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function BinaryOp) [x; TODO_constant; y] in
+  | [x; y] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (BinaryOp [x; TODO_constant; y])) in
       M.Return [(Register.read "t0")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with cmpZero : Function.t :=
-  Function.Body (fun α =>
+with cmpZero (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x; op] =>
-    [(0,
+  | [x; op] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.BinOp op "==" TODO_constant in
       Instr.If (Register.read "t0") 1 3
     );
@@ -3188,88 +3197,88 @@ with cmpZero : Function.t :=
       let* "t12" := Instr.Alloc (* varargs *) Alloc.Heap "*[2]any" in
       let* "t13" := Instr.IndexAddr (Register.read "t12") TODO_constant in
       let* "t14" := Instr.MakeInterface x in
-      let* _ := Instr.Store (Register.read "t13") (Register.read "t14") in
+      do* Instr.Store (Register.read "t13") (Register.read "t14") in
       let* "t15" := Instr.IndexAddr (Register.read "t12") TODO_constant in
       let* "t16" := Instr.MakeInterface op in
-      let* _ := Instr.Store (Register.read "t15") (Register.read "t16") in
+      do* Instr.Store (Register.read "t15") (Register.read "t16") in
       let* "t17" := Instr.Slice (Register.read "t12") None None in
-      let* "t18" := Instr.Call (CallKind.Function fmt.Sprintf) [TODO_constant; (Register.read "t17")] in
+      let* "t18" := Instr.Call (CallKind.Function (fmt.Sprintf [TODO_constant; (Register.read "t17")])) in
       let* "t19" := Instr.MakeInterface (Register.read "t18") in
       Instr.Panic (Register.read "t19")
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with i64tof : Function.t :=
-  Function.Body (fun α =>
+with i64tof (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.floatVal" in
       let* "t1" := Instr.FieldAddr (Register.read "t0") 0 in
-      let* "t2" := Instr.Call (CallKind.Function newFloat) [] in
+      let* "t2" := Instr.Call (CallKind.Function (newFloat [])) in
       let* "t3" := Instr.ChangeType x in
-      let* "t4" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t2"); (Register.read "t3")] in
-      let* _ := Instr.Store (Register.read "t1") (Register.read "t4") in
+      let* "t4" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t2"); (Register.read "t3")])) in
+      do* Instr.Store (Register.read "t1") (Register.read "t4") in
       let* "t5" := Instr.UnOp "*" (Register.read "t0") in
       M.Return [(Register.read "t5")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with i64toi : Function.t :=
-  Function.Body (fun α =>
+with i64toi (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.intVal" in
       let* "t1" := Instr.FieldAddr (Register.read "t0") 0 in
-      let* "t2" := Instr.Call (CallKind.Function newInt) [] in
+      let* "t2" := Instr.Call (CallKind.Function (newInt [])) in
       let* "t3" := Instr.ChangeType x in
-      let* "t4" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t2"); (Register.read "t3")] in
-      let* _ := Instr.Store (Register.read "t1") (Register.read "t4") in
+      let* "t4" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t2"); (Register.read "t3")])) in
+      do* Instr.Store (Register.read "t1") (Register.read "t4") in
       let* "t5" := Instr.UnOp "*" (Register.read "t0") in
       M.Return [(Register.read "t5")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with i64tor : Function.t :=
-  Function.Body (fun α =>
+with i64tor (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.ratVal" in
       let* "t1" := Instr.FieldAddr (Register.read "t0") 0 in
-      let* "t2" := Instr.Call (CallKind.Function newRat) [] in
+      let* "t2" := Instr.Call (CallKind.Function (newRat [])) in
       let* "t3" := Instr.ChangeType x in
-      let* "t4" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t2"); (Register.read "t3")] in
-      let* _ := Instr.Store (Register.read "t1") (Register.read "t4") in
+      let* "t4" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t2"); (Register.read "t3")])) in
+      do* Instr.Store (Register.read "t1") (Register.read "t4") in
       let* "t5" := Instr.UnOp "*" (Register.read "t0") in
       M.Return [(Register.read "t5")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with init : Function.t :=
-  Function.Body (fun α =>
+with init (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [] =>
-    [(0,
+  | [] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.UnOp "*" (Register.read "init$guard") in
       Instr.If (Register.read "t0") 2 1
     );
     (1,
-      let* _ := Instr.Store (Register.read "init$guard") TODO_constant in
-      let* "t1" := Instr.Call (CallKind.Function strconv.init) [] in
-      let* "t2" := Instr.Call (CallKind.Function fmt.init) [] in
-      let* "t3" := Instr.Call (CallKind.Function go.token.init) [] in
-      let* "t4" := Instr.Call (CallKind.Function math.init) [] in
-      let* "t5" := Instr.Call (CallKind.Function math.big.init) [] in
-      let* "t6" := Instr.Call (CallKind.Function math.bits.init) [] in
-      let* "t7" := Instr.Call (CallKind.Function strings.init) [] in
-      let* "t8" := Instr.Call (CallKind.Function sync.init) [] in
-      let* "t9" := Instr.Call (CallKind.Function unicode.utf8.init) [] in
+      do* Instr.Store (Register.read "init$guard") TODO_constant in
+      let* "t1" := Instr.Call (CallKind.Function (strconv.init [])) in
+      let* "t2" := Instr.Call (CallKind.Function (fmt.init [])) in
+      let* "t3" := Instr.Call (CallKind.Function (go.token.init [])) in
+      let* "t4" := Instr.Call (CallKind.Function (math.init [])) in
+      let* "t5" := Instr.Call (CallKind.Function (math.big.init [])) in
+      let* "t6" := Instr.Call (CallKind.Function (math.bits.init [])) in
+      let* "t7" := Instr.Call (CallKind.Function (strings.init [])) in
+      let* "t8" := Instr.Call (CallKind.Function (sync.init [])) in
+      let* "t9" := Instr.Call (CallKind.Function (unicode.utf8.init [])) in
       let* "t10" := Instr.IndexAddr (Register.read "_Kind_index") TODO_constant in
       let* "t11" := Instr.IndexAddr (Register.read "_Kind_index") TODO_constant in
       let* "t12" := Instr.IndexAddr (Register.read "_Kind_index") TODO_constant in
@@ -3277,29 +3286,29 @@ with init : Function.t :=
       let* "t14" := Instr.IndexAddr (Register.read "_Kind_index") TODO_constant in
       let* "t15" := Instr.IndexAddr (Register.read "_Kind_index") TODO_constant in
       let* "t16" := Instr.IndexAddr (Register.read "_Kind_index") TODO_constant in
-      let* _ := Instr.Store (Register.read "t10") TODO_constant in
-      let* _ := Instr.Store (Register.read "t11") TODO_constant in
-      let* _ := Instr.Store (Register.read "t12") TODO_constant in
-      let* _ := Instr.Store (Register.read "t13") TODO_constant in
-      let* _ := Instr.Store (Register.read "t14") TODO_constant in
-      let* _ := Instr.Store (Register.read "t15") TODO_constant in
-      let* _ := Instr.Store (Register.read "t16") TODO_constant in
+      do* Instr.Store (Register.read "t10") TODO_constant in
+      do* Instr.Store (Register.read "t11") TODO_constant in
+      do* Instr.Store (Register.read "t12") TODO_constant in
+      do* Instr.Store (Register.read "t13") TODO_constant in
+      do* Instr.Store (Register.read "t14") TODO_constant in
+      do* Instr.Store (Register.read "t15") TODO_constant in
+      do* Instr.Store (Register.read "t16") TODO_constant in
       let* "t17" := Instr.FieldAddr (Register.read "floatVal0") 0 in
-      let* "t18" := Instr.Call (CallKind.Function newFloat) [] in
-      let* _ := Instr.Store (Register.read "t17") (Register.read "t18") in
+      let* "t18" := Instr.Call (CallKind.Function (newFloat [])) in
+      do* Instr.Store (Register.read "t17") (Register.read "t18") in
       Instr.Jump 2
     );
     (2,
       M.Return []
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with is32bit : Function.t :=
-  Function.Body (fun α =>
+with is32bit (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.BinOp TODO_constant "<=" x in
       Instr.If (Register.read "t0") 1 2
     );
@@ -3310,15 +3319,15 @@ with is32bit : Function.t :=
     (2,
       let* "t2" := Instr.Phi (* && *) [TODO_constant; (Register.read "t1")] in
       M.Return [(Register.read "t2")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with is63bit : Function.t :=
-  Function.Body (fun α =>
+with is63bit (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.BinOp TODO_constant "<=" x in
       Instr.If (Register.read "t0") 1 2
     );
@@ -3329,56 +3338,56 @@ with is63bit : Function.t :=
     (2,
       let* "t2" := Instr.Phi (* && *) [TODO_constant; (Register.read "t1")] in
       M.Return [(Register.read "t2")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with itof : Function.t :=
-  Function.Body (fun α =>
+with itof (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t0") x in
+      do* Instr.Store (Register.read "t0") x in
       let* "t1" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.floatVal" in
       let* "t2" := Instr.FieldAddr (Register.read "t1") 0 in
-      let* "t3" := Instr.Call (CallKind.Function newFloat) [] in
+      let* "t3" := Instr.Call (CallKind.Function (newFloat [])) in
       let* "t4" := Instr.FieldAddr (Register.read "t0") 0 in
       let* "t5" := Instr.UnOp "*" (Register.read "t4") in
-      let* "t6" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t3"); (Register.read "t5")] in
-      let* _ := Instr.Store (Register.read "t2") (Register.read "t6") in
+      let* "t6" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t3"); (Register.read "t5")])) in
+      do* Instr.Store (Register.read "t2") (Register.read "t6") in
       let* "t7" := Instr.UnOp "*" (Register.read "t1") in
       M.Return [(Register.read "t7")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with itor : Function.t :=
-  Function.Body (fun α =>
+with itor (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* x *) Alloc.Local "*go/constant.intVal" in
-      let* _ := Instr.Store (Register.read "t0") x in
+      do* Instr.Store (Register.read "t0") x in
       let* "t1" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.ratVal" in
       let* "t2" := Instr.FieldAddr (Register.read "t1") 0 in
-      let* "t3" := Instr.Call (CallKind.Function newRat) [] in
+      let* "t3" := Instr.Call (CallKind.Function (newRat [])) in
       let* "t4" := Instr.FieldAddr (Register.read "t0") 0 in
       let* "t5" := Instr.UnOp "*" (Register.read "t4") in
-      let* "t6" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t3"); (Register.read "t5")] in
-      let* _ := Instr.Store (Register.read "t2") (Register.read "t6") in
+      let* "t6" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t3"); (Register.read "t5")])) in
+      do* Instr.Store (Register.read "t2") (Register.read "t6") in
       let* "t7" := Instr.UnOp "*" (Register.read "t1") in
       M.Return [(Register.read "t7")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with makeComplex : Function.t :=
-  Function.Body (fun α =>
+with makeComplex (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [re; im] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Method re "Kind") [] in
+  | [re; im] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Method re "Kind" []) in
       let* "t1" := Instr.BinOp (Register.read "t0") "==" TODO_constant in
       Instr.If (Register.read "t1") 1 3
     );
@@ -3390,26 +3399,26 @@ with makeComplex : Function.t :=
       let* "t3" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.complexVal" in
       let* "t4" := Instr.FieldAddr (Register.read "t3") 0 in
       let* "t5" := Instr.FieldAddr (Register.read "t3") 1 in
-      let* _ := Instr.Store (Register.read "t4") re in
-      let* _ := Instr.Store (Register.read "t5") im in
+      do* Instr.Store (Register.read "t4") re in
+      do* Instr.Store (Register.read "t5") im in
       let* "t6" := Instr.UnOp "*" (Register.read "t3") in
       let* "t7" := Instr.MakeInterface (Register.read "t6") in
       M.Return [(Register.read "t7")]
     );
     (3,
-      let* "t8" := Instr.Call (CallKind.Method im "Kind") [] in
+      let* "t8" := Instr.Call (CallKind.Method im "Kind" []) in
       let* "t9" := Instr.BinOp (Register.read "t8") "==" TODO_constant in
       Instr.If (Register.read "t9") 1 2
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with makeFloat : Function.t :=
-  Function.Body (fun α =>
+with makeFloat (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function TODO_method) [x] in
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (TODO_method [x])) in
       let* "t1" := Instr.BinOp (Register.read "t0") "==" TODO_constant in
       Instr.If (Register.read "t1") 1 2
     );
@@ -3419,7 +3428,7 @@ with makeFloat : Function.t :=
       M.Return [(Register.read "t3")]
     );
     (2,
-      let* "t4" := Instr.Call (CallKind.Function TODO_method) [x] in
+      let* "t4" := Instr.Call (CallKind.Function (TODO_method [x])) in
       Instr.If (Register.read "t4") 3 4
     );
     (3,
@@ -3429,39 +3438,39 @@ with makeFloat : Function.t :=
     (4,
       let* "t6" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.floatVal" in
       let* "t7" := Instr.FieldAddr (Register.read "t6") 0 in
-      let* _ := Instr.Store (Register.read "t7") x in
+      do* Instr.Store (Register.read "t7") x in
       let* "t8" := Instr.UnOp "*" (Register.read "t6") in
       let* "t9" := Instr.MakeInterface (Register.read "t8") in
       M.Return [(Register.read "t9")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with makeFloatFromLiteral : Function.t :=
-  Function.Body (fun α =>
+with makeFloatFromLiteral (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [lit] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function newFloat) [] in
-      let* "t1" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t0"); lit] in
+  | [lit] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (newFloat [])) in
+      let* "t1" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t0"); lit])) in
       let* "t2" := Instr.Extract (Register.read "t1") 0 in
       let* "t3" := Instr.Extract (Register.read "t1") 1 in
       Instr.If (Register.read "t3") 1 2
     );
     (1,
-      let* "t4" := Instr.Call (CallKind.Function smallFloat) [(Register.read "t2")] in
+      let* "t4" := Instr.Call (CallKind.Function (smallFloat [(Register.read "t2")])) in
       Instr.If (Register.read "t4") 3 4
     );
     (2,
       M.Return [TODO_constant]
     );
     (3,
-      let* "t5" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t2")] in
+      let* "t5" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t2")])) in
       let* "t6" := Instr.BinOp (Register.read "t5") "==" TODO_constant in
       Instr.If (Register.read "t6") 5 6
     );
     (4,
-      let* "t7" := Instr.Call (CallKind.Function makeFloat) [(Register.read "t2")] in
+      let* "t7" := Instr.Call (CallKind.Function (makeFloat [(Register.read "t2")])) in
       M.Return [(Register.read "t7")]
     );
     (5,
@@ -3469,8 +3478,8 @@ with makeFloatFromLiteral : Function.t :=
     );
     (6,
       let* "t8" := Instr.Phi (* lit *) [lit; TODO_constant] in
-      let* "t9" := Instr.Call (CallKind.Function newRat) [] in
-      let* "t10" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t9"); (Register.read "t8")] in
+      let* "t9" := Instr.Call (CallKind.Function (newRat [])) in
+      let* "t10" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t9"); (Register.read "t8")])) in
       let* "t11" := Instr.Extract (Register.read "t10") 0 in
       let* "t12" := Instr.Extract (Register.read "t10") 1 in
       Instr.If (Register.read "t12") 7 4
@@ -3478,24 +3487,24 @@ with makeFloatFromLiteral : Function.t :=
     (7,
       let* "t13" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.ratVal" in
       let* "t14" := Instr.FieldAddr (Register.read "t13") 0 in
-      let* _ := Instr.Store (Register.read "t14") (Register.read "t11") in
+      do* Instr.Store (Register.read "t14") (Register.read "t11") in
       let* "t15" := Instr.UnOp "*" (Register.read "t13") in
       let* "t16" := Instr.MakeInterface (Register.read "t15") in
       M.Return [(Register.read "t16")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with makeInt : Function.t :=
-  Function.Body (fun α =>
+with makeInt (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function TODO_method) [x] in
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (TODO_method [x])) in
       Instr.If (Register.read "t0") 1 2
     );
     (1,
-      let* "t1" := Instr.Call (CallKind.Function TODO_method) [x] in
+      let* "t1" := Instr.Call (CallKind.Function (TODO_method [x])) in
       let* "t2" := Instr.ChangeType (Register.read "t1") in
       let* "t3" := Instr.MakeInterface (Register.read "t2") in
       M.Return [(Register.read "t3")]
@@ -3503,28 +3512,28 @@ with makeInt : Function.t :=
     (2,
       let* "t4" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.intVal" in
       let* "t5" := Instr.FieldAddr (Register.read "t4") 0 in
-      let* _ := Instr.Store (Register.read "t5") x in
+      do* Instr.Store (Register.read "t5") x in
       let* "t6" := Instr.UnOp "*" (Register.read "t4") in
       let* "t7" := Instr.MakeInterface (Register.read "t6") in
       M.Return [(Register.read "t7")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with makeRat : Function.t :=
-  Function.Body (fun α =>
+with makeRat (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function TODO_method) [x] in
-      let* "t1" := Instr.Call (CallKind.Function TODO_method) [x] in
-      let* "t2" := Instr.Call (CallKind.Function smallInt) [(Register.read "t0")] in
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (TODO_method [x])) in
+      let* "t1" := Instr.Call (CallKind.Function (TODO_method [x])) in
+      let* "t2" := Instr.Call (CallKind.Function (smallInt [(Register.read "t0")])) in
       Instr.If (Register.read "t2") 3 2
     );
     (1,
       let* "t3" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.ratVal" in
       let* "t4" := Instr.FieldAddr (Register.read "t3") 0 in
-      let* _ := Instr.Store (Register.read "t4") x in
+      do* Instr.Store (Register.read "t4") x in
       let* "t5" := Instr.UnOp "*" (Register.read "t3") in
       let* "t6" := Instr.MakeInterface (Register.read "t5") in
       M.Return [(Register.read "t6")]
@@ -3532,27 +3541,27 @@ with makeRat : Function.t :=
     (2,
       let* "t7" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.floatVal" in
       let* "t8" := Instr.FieldAddr (Register.read "t7") 0 in
-      let* "t9" := Instr.Call (CallKind.Function newFloat) [] in
-      let* "t10" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t9"); x] in
-      let* _ := Instr.Store (Register.read "t8") (Register.read "t10") in
+      let* "t9" := Instr.Call (CallKind.Function (newFloat [])) in
+      let* "t10" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t9"); x])) in
+      do* Instr.Store (Register.read "t8") (Register.read "t10") in
       let* "t11" := Instr.UnOp "*" (Register.read "t7") in
       let* "t12" := Instr.MakeInterface (Register.read "t11") in
       M.Return [(Register.read "t12")]
     );
     (3,
-      let* "t13" := Instr.Call (CallKind.Function smallInt) [(Register.read "t1")] in
+      let* "t13" := Instr.Call (CallKind.Function (smallInt [(Register.read "t1")])) in
       Instr.If (Register.read "t13") 1 2
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with _'match : Function.t :=
-  Function.Body (fun α =>
+with _'match (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x; y] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function ord) [x] in
-      let* "t1" := Instr.Call (CallKind.Function ord) [y] in
+  | [x; y] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (ord [x])) in
+      let* "t1" := Instr.Call (CallKind.Function (ord [y])) in
       let* "t2" := Instr.BinOp (Register.read "t0") "<" (Register.read "t1") in
       Instr.If (Register.read "t2") 2 4
     );
@@ -3562,13 +3571,13 @@ with _'match : Function.t :=
       M.Return [(Register.read "t3"); (Register.read "t4")]
     );
     (2,
-      let* "t5" := Instr.Call (CallKind.Function match0) [x; y] in
+      let* "t5" := Instr.Call (CallKind.Function (match0 [x; y])) in
       let* "t6" := Instr.Extract (Register.read "t5") 0 in
       let* "t7" := Instr.Extract (Register.read "t5") 1 in
       Instr.Jump 1
     );
     (3,
-      let* "t8" := Instr.Call (CallKind.Function match0) [y; x] in
+      let* "t8" := Instr.Call (CallKind.Function (match0 [y; x])) in
       let* "t9" := Instr.Extract (Register.read "t8") 0 in
       let* "t10" := Instr.Extract (Register.read "t8") 1 in
       Instr.Jump 1
@@ -3576,15 +3585,15 @@ with _'match : Function.t :=
     (4,
       let* "t11" := Instr.BinOp (Register.read "t0") ">" (Register.read "t1") in
       Instr.If (Register.read "t11") 3 1
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with match0 : Function.t :=
-  Function.Body (fun α =>
+with match0 (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x; y] =>
-    [(0,
+  | [x; y] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert y TypeAssert.CommaOk "go/constant.intVal" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -3606,7 +3615,7 @@ with match0 : Function.t :=
       Instr.If (Register.read "t8") 5 6
     );
     (4,
-      let* "t9" := Instr.Call (CallKind.Function i64toi) [(Register.read "t4")] in
+      let* "t9" := Instr.Call (CallKind.Function (i64toi [(Register.read "t4")])) in
       let* "t10" := Instr.MakeInterface (Register.read "t9") in
       M.Return [(Register.read "t10"); y]
     );
@@ -3623,7 +3632,7 @@ with match0 : Function.t :=
       Instr.If (Register.read "t16") 10 11
     );
     (7,
-      let* "t17" := Instr.Call (CallKind.Function i64tor) [(Register.read "t12")] in
+      let* "t17" := Instr.Call (CallKind.Function (i64tor [(Register.read "t12")])) in
       let* "t18" := Instr.MakeInterface (Register.read "t17") in
       M.Return [(Register.read "t18"); y]
     );
@@ -3634,7 +3643,7 @@ with match0 : Function.t :=
       Instr.If (Register.read "t21") 9 1
     );
     (9,
-      let* "t22" := Instr.Call (CallKind.Function itor) [(Register.read "t20")] in
+      let* "t22" := Instr.Call (CallKind.Function (itor [(Register.read "t20")])) in
       let* "t23" := Instr.MakeInterface (Register.read "t22") in
       M.Return [(Register.read "t23"); y]
     );
@@ -3651,7 +3660,7 @@ with match0 : Function.t :=
       Instr.If (Register.read "t29") 17 1
     );
     (12,
-      let* "t30" := Instr.Call (CallKind.Function i64tof) [(Register.read "t25")] in
+      let* "t30" := Instr.Call (CallKind.Function (i64tof [(Register.read "t25")])) in
       let* "t31" := Instr.MakeInterface (Register.read "t30") in
       M.Return [(Register.read "t31"); y]
     );
@@ -3662,7 +3671,7 @@ with match0 : Function.t :=
       Instr.If (Register.read "t34") 14 15
     );
     (14,
-      let* "t35" := Instr.Call (CallKind.Function itof) [(Register.read "t33")] in
+      let* "t35" := Instr.Call (CallKind.Function (itof [(Register.read "t33")])) in
       let* "t36" := Instr.MakeInterface (Register.read "t35") in
       M.Return [(Register.read "t36"); y]
     );
@@ -3673,68 +3682,68 @@ with match0 : Function.t :=
       Instr.If (Register.read "t39") 16 1
     );
     (16,
-      let* "t40" := Instr.Call (CallKind.Function rtof) [(Register.read "t38")] in
+      let* "t40" := Instr.Call (CallKind.Function (rtof [(Register.read "t38")])) in
       let* "t41" := Instr.MakeInterface (Register.read "t40") in
       M.Return [(Register.read "t41"); y]
     );
     (17,
-      let* "t42" := Instr.Call (CallKind.Function vtoc) [x] in
+      let* "t42" := Instr.Call (CallKind.Function (vtoc [x])) in
       let* "t43" := Instr.MakeInterface (Register.read "t42") in
       M.Return [(Register.read "t43"); y]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with mul : Function.t :=
-  Function.Body (fun α =>
+with mul (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x; y] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function BinaryOp) [x; TODO_constant; y] in
+  | [x; y] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (BinaryOp [x; TODO_constant; y])) in
       M.Return [(Register.read "t0")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with newFloat : Function.t :=
-  Function.Body (fun α =>
+with newFloat (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [] =>
-    [(0,
+  | [] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* new *) Alloc.Heap "*math/big.Float" in
-      let* "t1" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t0"); TODO_constant] in
+      let* "t1" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t0"); TODO_constant])) in
       M.Return [(Register.read "t1")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with newInt : Function.t :=
-  Function.Body (fun α =>
+with newInt (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [] =>
-    [(0,
+  | [] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* new *) Alloc.Heap "*math/big.Int" in
       M.Return [(Register.read "t0")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with newRat : Function.t :=
-  Function.Body (fun α =>
+with newRat (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [] =>
-    [(0,
+  | [] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* new *) Alloc.Heap "*math/big.Rat" in
       M.Return [(Register.read "t0")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with ord : Function.t :=
-  Function.Body (fun α =>
+with ord (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.TypeAssert x TypeAssert.CommaOk "go/constant.unknownVal" in
       let* "t1" := Instr.Extract (Register.read "t0") 0 in
       let* "t2" := Instr.Extract (Register.read "t0") 1 in
@@ -3805,27 +3814,27 @@ with ord : Function.t :=
     );
     (15,
       M.Return [TODO_constant]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with quo : Function.t :=
-  Function.Body (fun α =>
+with quo (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x; y] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function BinaryOp) [x; TODO_constant; y] in
+  | [x; y] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (BinaryOp [x; TODO_constant; y])) in
       M.Return [(Register.read "t0")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with reverse : Function.t :=
-  Function.Body (fun α =>
+with reverse (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function len) [x] in
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (len [x])) in
       Instr.Jump 3
     );
     (1,
@@ -3838,9 +3847,9 @@ with reverse : Function.t :=
       let* "t7" := Instr.IndexAddr x (Register.read "t12") in
       let* "t8" := Instr.UnOp "*" (Register.read "t7") in
       let* "t9" := Instr.IndexAddr x (Register.read "t12") in
-      let* _ := Instr.Store (Register.read "t9") (Register.read "t6") in
+      do* Instr.Store (Register.read "t9") (Register.read "t6") in
       let* "t10" := Instr.IndexAddr x (Register.read "t2") in
-      let* _ := Instr.Store (Register.read "t10") (Register.read "t8") in
+      do* Instr.Store (Register.read "t10") (Register.read "t8") in
       let* "t11" := Instr.BinOp (Register.read "t12") "+" TODO_constant in
       Instr.Jump 3
     );
@@ -3852,43 +3861,43 @@ with reverse : Function.t :=
       let* "t13" := Instr.BinOp (Register.read "t12") "+" (Register.read "t12") in
       let* "t14" := Instr.BinOp (Register.read "t13") "<" (Register.read "t0") in
       Instr.If (Register.read "t14") 1 2
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with rtof : Function.t :=
-  Function.Body (fun α =>
+with rtof (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* x *) Alloc.Local "*go/constant.ratVal" in
-      let* _ := Instr.Store (Register.read "t0") x in
+      do* Instr.Store (Register.read "t0") x in
       let* "t1" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.floatVal" in
       let* "t2" := Instr.FieldAddr (Register.read "t1") 0 in
-      let* "t3" := Instr.Call (CallKind.Function newFloat) [] in
+      let* "t3" := Instr.Call (CallKind.Function (newFloat [])) in
       let* "t4" := Instr.FieldAddr (Register.read "t0") 0 in
       let* "t5" := Instr.UnOp "*" (Register.read "t4") in
-      let* "t6" := Instr.Call (CallKind.Function TODO_method) [(Register.read "t3"); (Register.read "t5")] in
-      let* _ := Instr.Store (Register.read "t2") (Register.read "t6") in
+      let* "t6" := Instr.Call (CallKind.Function (TODO_method [(Register.read "t3"); (Register.read "t5")])) in
+      do* Instr.Store (Register.read "t2") (Register.read "t6") in
       let* "t7" := Instr.UnOp "*" (Register.read "t1") in
       M.Return [(Register.read "t7")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with smallFloat : Function.t :=
-  Function.Body (fun α =>
+with smallFloat (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function TODO_method) [x] in
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (TODO_method [x])) in
       Instr.If (Register.read "t0") 1 2
     );
     (1,
       M.Return [TODO_constant]
     );
     (2,
-      let* "t1" := Instr.Call (CallKind.Function TODO_method) [x; TODO_constant] in
+      let* "t1" := Instr.Call (CallKind.Function (TODO_method [x; TODO_constant])) in
       let* "t2" := Instr.BinOp TODO_constant "<" (Register.read "t1") in
       Instr.If (Register.read "t2") 3 4
     );
@@ -3899,23 +3908,23 @@ with smallFloat : Function.t :=
     (4,
       let* "t4" := Instr.Phi (* && *) [TODO_constant; (Register.read "t3")] in
       M.Return [(Register.read "t4")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with smallFloat64 : Function.t :=
-  Function.Body (fun α =>
+with smallFloat64 (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function math.IsInf) [x; TODO_constant] in
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (math.IsInf [x; TODO_constant])) in
       Instr.If (Register.read "t0") 1 2
     );
     (1,
       M.Return [TODO_constant]
     );
     (2,
-      let* "t1" := Instr.Call (CallKind.Function math.Frexp) [x] in
+      let* "t1" := Instr.Call (CallKind.Function (math.Frexp [x])) in
       let* "t2" := Instr.Extract (Register.read "t1") 0 in
       let* "t3" := Instr.Extract (Register.read "t1") 1 in
       let* "t4" := Instr.BinOp TODO_constant "<" (Register.read "t3") in
@@ -3928,48 +3937,48 @@ with smallFloat64 : Function.t :=
     (4,
       let* "t6" := Instr.Phi (* && *) [TODO_constant; (Register.read "t5")] in
       M.Return [(Register.read "t6")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with smallInt : Function.t :=
-  Function.Body (fun α =>
+with smallInt (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function TODO_method) [x] in
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (TODO_method [x])) in
       let* "t1" := Instr.BinOp (Register.read "t0") "<" TODO_constant in
       M.Return [(Register.read "t1")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with sub : Function.t :=
-  Function.Body (fun α =>
+with sub (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x; y] =>
-    [(0,
-      let* "t0" := Instr.Call (CallKind.Function BinaryOp) [x; TODO_constant; y] in
+  | [x; y] =>
+    M.Thunk (M.EvalBody [(0,
+      let* "t0" := Instr.Call (CallKind.Function (BinaryOp [x; TODO_constant; y])) in
       M.Return [(Register.read "t0")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end)
 
-with vtoc : Function.t :=
-  Function.Body (fun α =>
+with vtoc (α : list Val.t) : M (list Val.t) :=
+  M.Thunk (
   match α with
-  | Val.Tuple [x] =>
-    [(0,
+  | [x] =>
+    M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* complit *) Alloc.Local "*go/constant.complexVal" in
       let* "t1" := Instr.FieldAddr (Register.read "t0") 0 in
       let* "t2" := Instr.FieldAddr (Register.read "t0") 1 in
-      let* _ := Instr.Store (Register.read "t1") x in
+      do* Instr.Store (Register.read "t1") x in
       let* "t3" := Instr.MakeInterface TODO_constant in
-      let* _ := Instr.Store (Register.read "t2") (Register.read "t3") in
+      do* Instr.Store (Register.read "t2") (Register.read "t3") in
       let* "t4" := Instr.UnOp "*" (Register.read "t0") in
       M.Return [(Register.read "t4")]
-    )]
-  | _ => []
+    )])
+  | _ => M.Thunk (M.EvalBody [])
   end).
 
 (** ** Types *)

@@ -42,18 +42,22 @@ Module Val.
 End Val.
 
 Module M.
-  Inductive t (A : Set) : Set :=
+  CoInductive t (A : Set) : Set :=
   | Return (_ : A)
-  | Bind {B : Set} (_ : t B) (_ : B -> t A).
+  | Bind {B : Set} (_ : t B) (_ : B -> t A)
+	| Thunk (_ : t A)
+	| EvalBody (_ : list (Z * t A)).
   Arguments Return {A}.
   Arguments Bind {A B}.
+  Arguments Thunk {A}.
+  Arguments EvalBody {A}.
 End M.
 Definition M : Set -> Set := M.t.
 
 Module Register.
   Parameter read : string -> Val.t.
 
-  Parameter write : string -> M Val.t -> M (list Val.t) -> M (list Val.t).
+  Parameter write : string -> Val.t -> M unit.
 End Register.
 
 (* Notation "'let*' a := b 'in' c" :=
@@ -61,12 +65,15 @@ End Register.
   (at level 200, b at level 100, a name). *)
 
 Notation "'let*' a := b 'in' c" :=
-  (Register.write a b c)
+  (M.Bind b (fun v_b => M.Bind (Register.write a v_b) (fun '_ => c)))
+  (at level 200).
+
+Notation "'do*' b 'in' c" :=
+  (M.Bind b (fun '_ => c))
   (at level 200).
 
 Module Function.
-  CoInductive t : Set :=
-  | Body (_ : Val.t -> list (Z * M (list Val.t))).
+  Definition t : Set := list Val.t -> M (list Val.t).
 End Function.
 
 Module Alloc.
@@ -77,8 +84,8 @@ End Alloc.
 
 Module CallKind.
   Inductive t : Set :=
-  | Function (_ : Function.t)
-  | Method (_ : Val.t) (_ : string).
+  | Function (_ : M (list Val.t))
+  | Method (_ : Val.t) (_ : string) (_ : list Val.t).
 End CallKind.
 
 Module TypeAssert.
@@ -92,7 +99,7 @@ Module Instr.
 
   Parameter BinOp : Val.t -> string -> Val.t -> M Val.t.
 
-  Parameter Call : CallKind.t -> list Val.t -> M Val.t.
+  Parameter Call : CallKind.t -> M Val.t.
 
   Parameter ChangeInterface : Val.t -> M Val.t.
 
@@ -196,6 +203,8 @@ Module unicode.
     Parameter init : Function.t.
   End utf8.
 End unicode.
+
+Local Unset Guard Checking.
 `
 
 func escapeSpecialChars(name string) string {
@@ -354,15 +363,13 @@ func instructionToCoq(
 	var buffer bytes.Buffer
 
 	if !isLast {
-		buffer.WriteString("let* ")
 		if value, ok := instr.(ssa.Value); ok {
-			buffer.WriteString("\"")
-			buffer.WriteString(value.Name())
-			buffer.WriteString("\"")
+			buffer.WriteString("let* ")
+			buffer.WriteString("\"" + value.Name() + "\"")
+			buffer.WriteString(" := ")
 		} else {
-			buffer.WriteString("_")
+			buffer.WriteString("do* ")
 		}
-		buffer.WriteString(" := ")
 	}
 
 	switch instr := instr.(type) {
@@ -401,17 +408,20 @@ func instructionToCoq(
 			buffer.WriteString("\"" + escapeName(instr.Call.Method.Name()) + "\"")
 		} else {
 			buffer.WriteString("CallKind.Function")
-			buffer.WriteString(" ")
+			buffer.WriteString(" (")
 			buffer.WriteString(valueToCoq(packageToTranslate, instr.Call.Value))
 		}
-		buffer.WriteString(") [")
+		buffer.WriteString(" [")
 		for i, arg := range instr.Call.Args {
 			if i != 0 {
 				buffer.WriteString("; ")
 			}
 			buffer.WriteString(valueToCoq(packageToTranslate, arg))
 		}
-		buffer.WriteString("]")
+		buffer.WriteString("])")
+		if instr.Call.Method == nil {
+			buffer.WriteString(")")
+		}
 	case *ssa.ChangeInterface:
 		buffer.WriteString("Instr.ChangeInterface")
 		buffer.WriteString(" ")
@@ -663,11 +673,11 @@ func functionToCoq(
 		buffer.WriteString("with ")
 	}
 	buffer.WriteString(escapeName(f.Name()))
-	buffer.WriteString(" : Function.t :=\n")
+	buffer.WriteString(" (α : list Val.t) : M (list Val.t) :=\n")
 
-	buffer.WriteString("  Function.Body (fun α =>\n")
+	buffer.WriteString("  M.Thunk (\n")
 	buffer.WriteString("  match α with\n")
-	buffer.WriteString("  | Val.Tuple [")
+	buffer.WriteString("  | [")
 	for i_param, param := range f.Params {
 		if i_param != 0 {
 			buffer.WriteString("; ")
@@ -679,7 +689,7 @@ func functionToCoq(
 	for i_block, block := range f.Blocks {
 		buffer.WriteString("    ")
 		if i_block == 0 {
-			buffer.WriteString("[")
+			buffer.WriteString("M.Thunk (M.EvalBody [")
 		}
 		buffer.WriteString(fmt.Sprintf("(%d,\n", i_block))
 		for i_instr, instr := range block.Instrs {
@@ -689,13 +699,13 @@ func functionToCoq(
 		}
 		buffer.WriteString("    )")
 		if i_block == len(f.Blocks)-1 {
-			buffer.WriteString("]")
+			buffer.WriteString("])")
 		} else {
 			buffer.WriteString(";")
 		}
 		buffer.WriteString("\n")
 	}
-	buffer.WriteString("  | _ => []\n")
+	buffer.WriteString("  | _ => M.Thunk (M.EvalBody [])\n")
 	buffer.WriteString("  end)")
 
 	if isLast {
