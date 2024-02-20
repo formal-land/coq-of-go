@@ -1,4 +1,4 @@
-# coq-of-coq
+# coq-of-go
 
 > Translation from Go to Coq
 
