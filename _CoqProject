@@ -1,0 +1,2 @@
+-R . CoqOfGo
+-arg -impredicative-set

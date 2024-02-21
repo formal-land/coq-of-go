@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strings"
 
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
@@ -17,57 +18,261 @@ import (
 const coqHeader = `Require Import Coq.ZArith.ZArith.
 Require Import Coq.Strings.String.
 
+Import List.ListNotations.
+
+Local Open Scope list_scope.
+Local Open Scope string_scope.
 Local Open Scope Z_scope.
 
-Parameter float : Set.
+Parameter Rational : Set.
+
+Module Lit.
+  Inductive t : Set :=
+  | Bool (_ : bool)
+  | Int (_ : Z)
+  | Float (_ : Rational)
+  | Complex (_ _ : Rational)
+  | String (_ : string).
+End Lit.
 
 Module Val.
   Inductive t : Set :=
-  | bool : bool -> t
-  | int : Z -> t
-  | float : float -> t
-  | complex : float -> float -> t
-  | string : string -> t
-  .
+  | Lit (_ : Lit.t)
+  | Tuple (_ : list t).
 End Val.
 
-Parameter M : Set -> Set.
-
 Module M.
-	Parameter global : GlobalName.t -> M Val.t.
+  CoInductive t (A : Set) : Set :=
+  | Return (_ : A)
+  | Bind {B : Set} (_ : t B) (_ : B -> t A)
+	| Thunk (_ : t A)
+	| EvalBody (_ : list (Z * t A)).
+  Arguments Return {A}.
+  Arguments Bind {A B}.
+  Arguments Thunk {A}.
+  Arguments EvalBody {A}.
 End M.
+Definition M : Set -> Set := M.t.
 
+Module Register.
+  Parameter read : string -> Val.t.
+
+  Parameter write : string -> Val.t -> M unit.
+End Register.
+
+(* Notation "'let*' a := b 'in' c" :=
+  (M.Bind b (fun a => c))
+  (at level 200, b at level 100, a name). *)
+
+Notation "'let*' a := b 'in' c" :=
+  (M.Bind b (fun v_b => M.Bind (Register.write a v_b) (fun '_ => c)))
+  (at level 200).
+
+Notation "'do*' b 'in' c" :=
+  (M.Bind b (fun '_ => c))
+  (at level 200).
+
+Module Function.
+  Definition t : Set := list Val.t -> M (list Val.t).
+End Function.
+
+Module Alloc.
+  Inductive t : Set :=
+  | Heap
+  | Local.
+End Alloc.
+
+Module CallKind.
+  Inductive t : Set :=
+  | Function (_ : M (list Val.t))
+  | Method (_ : Val.t) (_ : string) (_ : list Val.t).
+End CallKind.
+
+Module TypeAssert.
+  Inductive t : Set :=
+  | CommaOk
+  | NoCommaOk.
+End TypeAssert.
+
+Module Instr.
+  Parameter Alloc : Alloc.t -> string -> M Val.t.
+
+  Parameter BinOp : Val.t -> string -> Val.t -> M Val.t.
+
+  Parameter Call : CallKind.t -> M Val.t.
+
+  Parameter ChangeInterface : Val.t -> M Val.t.
+
+  Parameter ChangeType : Val.t -> M Val.t.
+
+  Parameter Convert : Val.t -> M Val.t.
+
+  Parameter Extract : Val.t -> Z -> M Val.t.
+
+	Parameter Field : Val.t -> Z -> M Val.t.
+
+	Parameter FieldAddr : Val.t -> Z -> M Val.t.
+
+  Parameter If : Val.t -> Z -> Z -> M (list Val.t).
+
+  Parameter Index : Val.t -> Val.t -> M Val.t.
+
+  Parameter IndexAddr : Val.t -> Val.t -> M Val.t.
+
+  Parameter Jump : Z -> M (list Val.t).
+
+  Parameter MakeInterface : Val.t -> M Val.t.
+
+  Parameter MakeSlice : Val.t -> Val.t -> M Val.t.
+
+	Parameter Panic : Val.t -> M (list Val.t).
+
+  Parameter Phi : list Val.t -> M Val.t.
+
+  Parameter Slice : Val.t -> option Val.t -> option Val.t -> M Val.t.
+
+  Parameter Store : Val.t -> Val.t -> M Val.t.
+
+  Parameter TypeAssert : Val.t -> TypeAssert.t -> string -> M Val.t.
+
+	Parameter UnOp : string -> Val.t -> M Val.t.
+End Instr.
+
+Parameter TODO_constant : Val.t.
+
+Parameter TODO_method : Function.t.
+
+Parameter len : Function.t.
+
+Module fmt.
+  Parameter init : Function.t.
+
+  Parameter Sprintf : Function.t.
+End fmt.
+
+Module go.
+  Module token.
+    Parameter init : Function.t.
+  End token.
+End go.
+
+Module math.
+  Parameter init : Function.t.
+
+  Parameter Frexp : Function.t.
+
+  Parameter IsInf : Function.t.
+
+  Parameter IsNaN : Function.t.
+
+  Module big.
+    Parameter init : Function.t.
+
+    Parameter NewInt : Function.t.
+
+    Parameter NewRat : Function.t.
+  End big.
+
+  Module bits.
+    Parameter init : Function.t.
+
+    Parameter LeadingZeros64 : Function.t.
+  End bits.
+End math.
+
+Module strconv.
+  Parameter init : Function.t.
+
+  Parameter ParseInt : Function.t.
+
+  Parameter Unquote : Function.t.
+
+  Parameter UnquoteChar : Function.t.
+End strconv.
+
+Module strings.
+  Parameter init : Function.t.
+End strings.
+
+Module sync.
+  Parameter init : Function.t.
+End sync.
+
+Module unicode.
+  Module utf8.
+    Parameter init : Function.t.
+  End utf8.
+End unicode.
+
+Local Unset Guard Checking.
 `
 
-// TODO: this function should be injective
-func escapeName(name string) string {
+func escapeSpecialChars(name string) string {
 	var buffer bytes.Buffer
+
 	for _, c := range name {
-		if c == '$' {
-			buffer.WriteString("_dollar_")
-		} else {
+		switch c {
+		case '$':
+			buffer.WriteString("_'dollar")
+		case '\'':
+			buffer.WriteString("_'prime_")
+		default:
 			buffer.WriteRune(c)
 		}
 	}
+
 	return buffer.String()
+}
+
+func escapeName(name string) string {
+	nameWithEscapedChars := escapeSpecialChars(name)
+
+	reseredNames := []string{
+		"and",
+		"as",
+		"else",
+		"end",
+		"exists",
+		"fix",
+		"forall",
+		"fun",
+		"if",
+		"in",
+		"let",
+		"match",
+		"Prop",
+		"return",
+		"Set",
+		"then",
+		"Type",
+		"with",
+	}
+
+	for _, reservedName := range reseredNames {
+		if nameWithEscapedChars == reservedName {
+			return "_'" + nameWithEscapedChars
+		}
+	}
+
+	return nameWithEscapedChars
 }
 
 func constToCoq(c *ssa.Const) string {
 	switch c.Value.Kind() {
 	case constant.Bool:
 		if constant.BoolVal(c.Value) {
-			return "Val.bool true"
+			return "Val.Lit (Lit.Bool true)"
 		} else {
-			return "Val.bool false"
+			return "Val.Lit (Lit.Bool false)"
 		}
 	case constant.Int:
-		return fmt.Sprintf("Val.int %v", c.Value.ExactString())
+		return fmt.Sprintf("Val.Lit (Lit.Int %v)", c.Value.ExactString())
 	case constant.Float:
-		return fmt.Sprintf("Val.float %v", c.Value.ExactString())
+		return fmt.Sprintf("Val.Lit (Lit.Float %v)", c.Value.ExactString())
 	case constant.Complex:
-		return fmt.Sprintf("Val.complex %v", c.Value.ExactString())
+		return fmt.Sprintf("Val.Lit (Lit.Complex %v)", c.Value.ExactString())
 	case constant.String:
-		return fmt.Sprintf("Val.string %v", c.Value.ExactString())
+		return fmt.Sprintf("Val.Lit (Lit.String %v)", c.Value.ExactString())
 	case constant.Unknown:
 		fallthrough
 	default:
@@ -97,348 +302,427 @@ func globalToCoq(global *ssa.Global) string {
 	buffer.WriteString(" : M Val.t :=\n")
 
 	buffer.WriteString("  ")
-	buffer.WriteString("M.global GlobalName.")
+	buffer.WriteString("global GlobalName.")
 	buffer.WriteString(escapeName(global.Name()))
 	buffer.WriteString(".\n")
 
 	return buffer.String()
 }
 
-func instructionToCoq(instr ssa.Instruction) string {
+// The name of a function, fully qualified with its package path.
+func functionNameToCoq(packageToTranslate string, function *ssa.Function) string {
+	// TODO: Handle the case where the function is a method.
+	if function.Signature.Recv() != nil {
+		return "TODO_method"
+	}
+
+	// Split the function name into its package path and the function name.
+	pathAndName := strings.Split(function.String(), ".")
+	path := pathAndName[0]
+	name := escapeName(pathAndName[1])
+
+	if path == packageToTranslate {
+		return name
+	}
+
+	pathParts := strings.Split(path, "/")
+
+	for pathPart := range pathParts {
+		pathParts[pathPart] = escapeName(pathParts[pathPart])
+	}
+
+	return strings.Join(pathParts, ".") + "." + name
+}
+
+func valueToCoq(packageToTranslate string, value ssa.Value) string {
+	// fmt.Println("-= String =-")
+	// fmt.Println(value.String())
+	// fmt.Println("-= Name =-")
+	// fmt.Println(value.Name())
+	// fmt.Println("-= TypeOf =-")
+	// fmt.Println(reflect.TypeOf(value))
+	// fmt.Println()
+
+	switch value := value.(type) {
+	case *ssa.Const:
+		return "TODO_constant"
+	case *ssa.Function:
+		return functionNameToCoq(packageToTranslate, value)
+	case *ssa.Builtin, *ssa.Parameter:
+		return escapeName(value.Name())
+	default:
+		return "(Register.read \"" + value.Name() + "\")"
+	}
+}
+
+func instructionToCoq(
+	packageToTranslate string,
+	isLast bool,
+	instr ssa.Instruction,
+) string {
 	var buffer bytes.Buffer
 
-	if value, ok := instr.(ssa.Value); ok {
-		buffer.WriteString(value.Name())
-		buffer.WriteString(" := ")
+	if !isLast {
+		if value, ok := instr.(ssa.Value); ok {
+			buffer.WriteString("let* ")
+			buffer.WriteString("\"" + value.Name() + "\"")
+			buffer.WriteString(" := ")
+		} else {
+			buffer.WriteString("do* ")
+		}
 	}
 
 	switch instr := instr.(type) {
 	case *ssa.Alloc:
-		buffer.WriteString("Alloc")
+		buffer.WriteString("Instr.Alloc")
 		buffer.WriteString(" ")
-		buffer.WriteString("(*")
+		buffer.WriteString("(* ")
 		buffer.WriteString(instr.Comment)
-		buffer.WriteString("*)")
+		buffer.WriteString(" *)")
 		buffer.WriteString(" ")
 		if instr.Heap {
-			buffer.WriteString("Heap")
+			buffer.WriteString("Alloc.Heap")
 		} else {
-			buffer.WriteString("Local")
+			buffer.WriteString("Alloc.Local")
 		}
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.Type().String())
+		buffer.WriteString("\"" + instr.Type().String() + "\"")
 	case *ssa.BinOp:
-		buffer.WriteString("BinOp")
+		buffer.WriteString("Instr.BinOp")
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.X.Name())
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
 		buffer.WriteString(" ")
 		buffer.WriteString("\"")
 		buffer.WriteString(instr.Op.String())
 		buffer.WriteString("\"")
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.Y.Name())
-		buffer.WriteString(")")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Y))
 	case *ssa.Call:
-		buffer.WriteString("Call")
+		buffer.WriteString("Instr.Call")
 		buffer.WriteString(" (")
-		buffer.WriteString(instr.Call.Value.Name())
-		buffer.WriteString(" ")
+		if instr.Call.Method != nil {
+			buffer.WriteString("CallKind.Method")
+			buffer.WriteString(" ")
+			buffer.WriteString(valueToCoq(packageToTranslate, instr.Call.Value))
+			buffer.WriteString(" ")
+			buffer.WriteString("\"" + escapeName(instr.Call.Method.Name()) + "\"")
+		} else {
+			buffer.WriteString("CallKind.Function")
+			buffer.WriteString(" (")
+			buffer.WriteString(valueToCoq(packageToTranslate, instr.Call.Value))
+		}
+		buffer.WriteString(" [")
 		for i, arg := range instr.Call.Args {
 			if i != 0 {
-				buffer.WriteString(" ")
+				buffer.WriteString("; ")
 			}
-			buffer.WriteString(arg.Name())
+			buffer.WriteString(valueToCoq(packageToTranslate, arg))
 		}
-		buffer.WriteString(")")
+		buffer.WriteString("])")
+		if instr.Call.Method == nil {
+			buffer.WriteString(")")
+		}
 	case *ssa.ChangeInterface:
-		buffer.WriteString("ChangeInterface")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
-		buffer.WriteString(")")
+		buffer.WriteString("Instr.ChangeInterface")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
 	case *ssa.ChangeType:
-		buffer.WriteString("ChangeType")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
-		buffer.WriteString(")")
+		buffer.WriteString("Instr.ChangeType")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
 	case *ssa.Convert:
-		buffer.WriteString("Convert")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
-		buffer.WriteString(")")
+		buffer.WriteString("Instr.Convert")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
 	case *ssa.Extract:
-		buffer.WriteString("Extract")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.Tuple.Name())
+		buffer.WriteString("Instr.Extract")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Tuple))
 		buffer.WriteString(" ")
 		buffer.WriteString(fmt.Sprintf("%d", instr.Index))
-		buffer.WriteString(")")
 	case *ssa.Field:
-		buffer.WriteString("Field")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
+		buffer.WriteString("Instr.Field")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
 		buffer.WriteString(" ")
 		buffer.WriteString(fmt.Sprintf("%d", instr.Field))
-		buffer.WriteString(")")
 	case *ssa.FieldAddr:
-		buffer.WriteString("FieldAddr")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
+		buffer.WriteString("Instr.FieldAddr")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
 		buffer.WriteString(" ")
 		buffer.WriteString(fmt.Sprintf("%d", instr.Field))
-		buffer.WriteString(")")
 	case *ssa.Go:
-		buffer.WriteString("Go")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.Call.Value.Name())
+		buffer.WriteString("Instr.Go")
 		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Call.Value))
+		buffer.WriteString(" [")
 		for i, arg := range instr.Call.Args {
 			if i != 0 {
-				buffer.WriteString(" ")
+				buffer.WriteString("; ")
 			}
-			buffer.WriteString(arg.Name())
+			buffer.WriteString(valueToCoq(packageToTranslate, arg))
 		}
-		buffer.WriteString(")")
+		buffer.WriteString("]")
 	case *ssa.If:
-		buffer.WriteString("If")
+		buffer.WriteString("Instr.If")
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.Cond.Name())
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Cond))
 		buffer.WriteString(" ")
 		buffer.WriteString(instr.Block().Succs[0].String())
 		buffer.WriteString(" ")
 		buffer.WriteString(instr.Block().Succs[1].String())
 	case *ssa.Index:
-		buffer.WriteString("Index")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
+		buffer.WriteString("Instr.Index")
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.Index.Name())
-		buffer.WriteString(")")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Index))
 	case *ssa.IndexAddr:
-		buffer.WriteString("IndexAddr")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
+		buffer.WriteString("Instr.IndexAddr")
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.Index.Name())
-		buffer.WriteString(")")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Index))
 	case *ssa.Jump:
-		buffer.WriteString("Jump")
+		buffer.WriteString("Instr.Jump")
 		buffer.WriteString(" ")
 		buffer.WriteString(instr.Block().Succs[0].String())
 	case *ssa.Lookup:
-		buffer.WriteString("Lookup")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
+		buffer.WriteString("Instr.Lookup")
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.Index.Name())
-		buffer.WriteString(")")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Index))
 	case *ssa.MakeChan:
-		buffer.WriteString("MakeChan")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.Size.Name())
-		buffer.WriteString(")")
-	case *ssa.MakeClosure:
-		buffer.WriteString("MakeClosure")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.Fn.Name())
+		buffer.WriteString("Instr.MakeChan")
 		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Size))
+	case *ssa.MakeClosure:
+		buffer.WriteString("Instr.MakeClosure")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Fn))
+		buffer.WriteString(" [")
 		for i, freeVar := range instr.Bindings {
 			if i != 0 {
-				buffer.WriteString(" ")
+				buffer.WriteString("; ")
 			}
-			buffer.WriteString(freeVar.Name())
+			buffer.WriteString(valueToCoq(packageToTranslate, freeVar))
 		}
-		buffer.WriteString(")")
+		buffer.WriteString("]")
 	case *ssa.MakeInterface:
 		// INFO: Program.MethodValue(m): find the implementation of a method
-		buffer.WriteString("MakeInterface")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
+		buffer.WriteString("Instr.MakeInterface")
 		buffer.WriteString(" ")
-		operands := instr.Operands(nil)
-		for i_operand, operand := range operands {
-			if i_operand != 0 {
-				buffer.WriteString(" ")
-			}
-			buffer.WriteString((*operand).Name())
-		}
-		buffer.WriteString(")")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
 	case *ssa.MakeMap:
-		buffer.WriteString("MakeMap")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.Reserve.Name())
-		buffer.WriteString(")")
+		buffer.WriteString("Instr.MakeMap")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Reserve))
 	case *ssa.MakeSlice:
-		buffer.WriteString("MakeSlice")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.Len.Name())
+		buffer.WriteString("Instr.MakeSlice")
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.Cap.Name())
-		buffer.WriteString(")")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Len))
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Cap))
 	case *ssa.MapUpdate:
-		buffer.WriteString("MapUpdate")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.Map.Name())
+		buffer.WriteString("Instr.MapUpdate")
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.Key.Name())
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Map))
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.Value.Name())
-		buffer.WriteString(")")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Key))
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Value))
 	case *ssa.Next:
-		buffer.WriteString("Next")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.Iter.Name())
-		buffer.WriteString(")")
+		buffer.WriteString("Instr.Next")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Iter))
 	case *ssa.Panic:
-		buffer.WriteString("Panic")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
-		buffer.WriteString(")")
+		buffer.WriteString("Instr.Panic")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
 	case *ssa.Phi:
-		buffer.WriteString("Phi")
+		buffer.WriteString("Instr.Phi")
 		buffer.WriteString(" ")
 		buffer.WriteString("(* ")
 		buffer.WriteString(instr.Comment)
-		buffer.WriteString(" *)")
-		buffer.WriteString(" (")
+		buffer.WriteString(" *) [")
 		for i, edge := range instr.Edges {
 			if i != 0 {
-				buffer.WriteString(" ")
+				buffer.WriteString("; ")
 			}
-			buffer.WriteString(edge.Name())
+			buffer.WriteString(valueToCoq(packageToTranslate, edge))
 		}
-		buffer.WriteString(")")
+		buffer.WriteString("]")
 	case *ssa.Range:
-		buffer.WriteString("Range")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
-		buffer.WriteString(")")
+		buffer.WriteString("Instr.Range")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
 	case *ssa.Return:
-		buffer.WriteString("Return")
-		buffer.WriteString(" (")
+		buffer.WriteString("M.Return")
+		buffer.WriteString(" [")
 		for i, result := range instr.Results {
 			if i != 0 {
-				buffer.WriteString(" ")
+				buffer.WriteString("; ")
 			}
-			buffer.WriteString(result.Name())
+			buffer.WriteString(valueToCoq(packageToTranslate, result))
 		}
-		buffer.WriteString(")")
+		buffer.WriteString("]")
 	case *ssa.RunDefers:
-		buffer.WriteString("RunDefers")
+		buffer.WriteString("Instr.RunDefers")
 	case *ssa.Select:
-		buffer.WriteString("Select")
-		buffer.WriteString(" (")
+		buffer.WriteString("Instr.Select")
+		buffer.WriteString(" ")
 		if instr.Blocking {
 			buffer.WriteString("Blocking")
 		} else {
 			buffer.WriteString("NonBlocking")
 		}
-		buffer.WriteString(fmt.Sprintf("%b", instr.Blocking))
-		for _, state := range instr.States {
-			buffer.WriteString(state.Chan.Name())
-			buffer.WriteString(" ")
+		buffer.WriteString(" [")
+		for i_state, state := range instr.States {
+			if i_state != 0 {
+				buffer.WriteString("; ")
+			}
+			buffer.WriteString("(")
+			buffer.WriteString(valueToCoq(packageToTranslate, state.Chan))
+			buffer.WriteString(", ")
 			switch state.Dir {
 			case types.RecvOnly:
-				buffer.WriteString("RecvOnly")
+				buffer.WriteString("ChannelDir.RecvOnly")
 			case types.SendOnly:
-				buffer.WriteString("SendOnly")
+				buffer.WriteString("ChannelDir.SendOnly")
 			case types.SendRecv:
-				buffer.WriteString("SendRecv")
+				buffer.WriteString("ChannelDir.SendRecv")
 			}
-			buffer.WriteString(" ")
-			buffer.WriteString(state.Send.Name())
+			buffer.WriteString(", ")
+			buffer.WriteString(valueToCoq(packageToTranslate, state.Send))
+			buffer.WriteString(")")
 		}
-		buffer.WriteString(")")
+		buffer.WriteString("]")
 	case *ssa.Slice:
-		buffer.WriteString("Slice")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
-		if instr.Low != nil {
-			buffer.WriteString(" ")
-			buffer.WriteString(instr.Low.Name())
-		}
-		if instr.High != nil {
-			buffer.WriteString(" ")
-			buffer.WriteString(instr.High.Name())
-		}
-		buffer.WriteString(")")
-	case *ssa.Store:
-		buffer.WriteString("Store")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.Addr.Name())
+		buffer.WriteString("Instr.Slice")
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.Val.Name())
-		buffer.WriteString(")")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
+		buffer.WriteString(" ")
+		if instr.Low != nil {
+			buffer.WriteString("(Some ")
+			buffer.WriteString(valueToCoq(packageToTranslate, instr.Low))
+			buffer.WriteString(")")
+		} else {
+			buffer.WriteString("None")
+		}
+		buffer.WriteString(" ")
+		if instr.High != nil {
+			buffer.WriteString("(Some ")
+			buffer.WriteString(valueToCoq(packageToTranslate, instr.High))
+			buffer.WriteString(")")
+		} else {
+			buffer.WriteString("None")
+		}
+	case *ssa.Store:
+		buffer.WriteString("Instr.Store")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Addr))
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.Val))
 	case *ssa.TypeAssert:
-		buffer.WriteString("TypeAssert")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.X.Name())
+		buffer.WriteString("Instr.TypeAssert")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
 		buffer.WriteString(" ")
 		if instr.CommaOk {
-			buffer.WriteString("CommaOk")
+			buffer.WriteString("TypeAssert.CommaOk")
 		} else {
-			buffer.WriteString("NoCommaOk")
+			buffer.WriteString("TypeAssert.NoCommaOk")
 		}
 		buffer.WriteString(" ")
+		buffer.WriteString("\"")
 		buffer.WriteString(instr.AssertedType.String())
-		buffer.WriteString(")")
+		buffer.WriteString("\"")
 	case *ssa.UnOp:
-		buffer.WriteString("UnOp")
-		buffer.WriteString(" (")
-		buffer.WriteString(instr.Op.String())
+		buffer.WriteString("Instr.UnOp")
 		buffer.WriteString(" ")
-		buffer.WriteString(instr.X.Name())
-		buffer.WriteString(")")
+		buffer.WriteString("\"")
+		buffer.WriteString(instr.Op.String())
+		buffer.WriteString("\"")
+		buffer.WriteString(" ")
+		buffer.WriteString(valueToCoq(packageToTranslate, instr.X))
 	default:
 		buffer.WriteString("Unknown: ")
 		buffer.WriteString(instr.String())
 	}
 
+	if !isLast {
+		buffer.WriteString(" in")
+	}
+
 	return buffer.String()
 }
 
-func functionToCoq(f *ssa.Function) string {
+func functionToCoq(
+	packageToTranslate string,
+	isFirst bool,
+	isLast bool,
+	f *ssa.Function,
+) string {
 	var buffer bytes.Buffer
 
-	buffer.WriteString("Definition ")
-	buffer.WriteString(f.Name())
+	if isFirst {
+		buffer.WriteString("CoFixpoint ")
+	} else {
+		buffer.WriteString("with ")
+	}
+	buffer.WriteString(escapeName(f.Name()))
+	buffer.WriteString(" (α : list Val.t) : M (list Val.t) :=\n")
 
-	buffer.WriteString(" (")
+	buffer.WriteString("  M.Thunk (\n")
+	buffer.WriteString("  match α with\n")
+	buffer.WriteString("  | [")
 	for i_param, param := range f.Params {
 		if i_param != 0 {
-			buffer.WriteString(" ")
+			buffer.WriteString("; ")
 		}
 		buffer.WriteString(param.Name())
 	}
-	buffer.WriteString(" : Val.t)")
+	buffer.WriteString("] =>\n")
 
-	buffer.WriteString(" : FunctionBody.t := [\n")
 	for i_block, block := range f.Blocks {
-		buffer.WriteString(fmt.Sprintf("  (%d, [\n", i_block))
+		buffer.WriteString("    ")
+		if i_block == 0 {
+			buffer.WriteString("M.Thunk (M.EvalBody [")
+		}
+		buffer.WriteString(fmt.Sprintf("(%d,\n", i_block))
 		for i_instr, instr := range block.Instrs {
-			buffer.WriteString("    ")
-			buffer.WriteString(instructionToCoq(instr))
-			if i_instr < len(block.Instrs)-1 {
-				buffer.WriteString(";")
-			}
+			buffer.WriteString("      ")
+			buffer.WriteString(instructionToCoq(packageToTranslate, i_instr == len(block.Instrs)-1, instr))
 			buffer.WriteString("\n")
 		}
-		buffer.WriteString("  ])")
-		if i_block < len(f.Blocks)-1 {
+		buffer.WriteString("    )")
+		if i_block == len(f.Blocks)-1 {
+			buffer.WriteString("])")
+		} else {
 			buffer.WriteString(";")
 		}
 		buffer.WriteString("\n")
 	}
-	buffer.WriteString("].\n")
+	buffer.WriteString("  | _ => M.Thunk (M.EvalBody [])\n")
+	buffer.WriteString("  end)")
+
+	if isLast {
+		buffer.WriteString(".")
+	}
+
+	buffer.WriteString("\n")
 
 	return buffer.String()
 }
 
 func main() {
+	packageToTranslate := os.Args[1]
+
 	// Load, parse, and type-check the initial packages.
 	cfg := &packages.Config{Mode: packages.LoadSyntax}
-	initial, err := packages.Load(cfg,
-		os.Args[1],
-	)
+	initial, err := packages.Load(cfg, packageToTranslate)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -500,6 +784,8 @@ func main() {
 	fmt.Println("  .")
 	fmt.Println("End GlobalName.")
 	fmt.Println()
+	fmt.Println("Parameter global : GlobalName.t -> M Val.t.")
+	fmt.Println()
 
 	for _, globalName := range globalNames {
 		global := members[globalName].(*ssa.Global)
@@ -507,9 +793,14 @@ func main() {
 	}
 
 	fmt.Print("(** ** Functions *)\n\n")
-	for _, functionName := range functionNames {
+	for i, functionName := range functionNames {
 		function := members[functionName].(*ssa.Function)
-		fmt.Println(functionToCoq(function))
+		fmt.Println(functionToCoq(
+			packageToTranslate,
+			i == 0,
+			i == len(functionNames)-1,
+			function,
+		))
 	}
 
 	fmt.Print("(** ** Types *)\n\n")
