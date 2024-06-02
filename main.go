@@ -6,6 +6,7 @@ import (
 	"go/constant"
 	"go/types"
 	"log"
+	"math/big"
 	"os"
 	"sort"
 	"strings"
@@ -32,7 +33,8 @@ Module Lit.
   | Int (_ : Z)
   | Float (_ : Rational)
   | Complex (_ _ : Rational)
-  | String (_ : string).
+  | String (_ : string)
+  | Nil.
 End Lit.
 
 Module Val.
@@ -45,8 +47,8 @@ Module M.
   CoInductive t (A : Set) : Set :=
   | Return (_ : A)
   | Bind {B : Set} (_ : t B) (_ : B -> t A)
-	| Thunk (_ : t A)
-	| EvalBody (_ : list (Z * t A)).
+  | Thunk (_ : t A)
+  | EvalBody (_ : list (Z * t A)).
   Arguments Return {A}.
   Arguments Bind {A B}.
   Arguments Thunk {A}.
@@ -138,14 +140,20 @@ Module Instr.
 	Parameter UnOp : string -> Val.t -> M Val.t.
 End Instr.
 
-Parameter TODO_constant : Val.t.
-
 Parameter TODO_method : Function.t.
+
+(** ** Builtins *)
+
+Parameter append : Function.t.
 
 Parameter len : Function.t.
 
+(** ** Go standard library *)
+
 Module fmt.
   Parameter init : Function.t.
+
+  Parameter Println : Function.t.
 
   Parameter Sprintf : Function.t.
 End fmt.
@@ -258,25 +266,41 @@ func escapeName(name string) string {
 }
 
 func constToCoq(c *ssa.Const) string {
-	switch c.Value.Kind() {
-	case constant.Bool:
-		if constant.BoolVal(c.Value) {
+	if c.Value == nil {
+		return "Val.Lit Lit.Nil"
+	}
+
+	switch value := constant.Val(c.Value).(type) {
+	case bool:
+		if value {
 			return "Val.Lit (Lit.Bool true)"
 		} else {
 			return "Val.Lit (Lit.Bool false)"
 		}
-	case constant.Int:
-		return fmt.Sprintf("Val.Lit (Lit.Int %v)", c.Value.ExactString())
-	case constant.Float:
-		return fmt.Sprintf("Val.Lit (Lit.Float %v)", c.Value.ExactString())
-	case constant.Complex:
-		return fmt.Sprintf("Val.Lit (Lit.Complex %v)", c.Value.ExactString())
-	case constant.String:
-		return fmt.Sprintf("Val.Lit (Lit.String %v)", c.Value.ExactString())
-	case constant.Unknown:
-		fallthrough
+	case int64:
+		var cString string
+		if value < 0 {
+			cString = fmt.Sprintf("(-%d)", -value)
+		} else {
+			cString = fmt.Sprintf("%d", value)
+		}
+		return "Val.Lit (Lit.Int " + cString + ")"
+	case *big.Int:
+		var cString string
+		if value.Cmp(big.NewInt(0)) == -1 {
+			cString = fmt.Sprintf("(-%d)", new(big.Int).Neg(value))
+		} else {
+			cString = fmt.Sprintf("%d", value)
+		}
+		return "Val.Lit (Lit.Int " + cString + ")"
+	case *big.Float:
+		return "Val.Lit (Lit.Float " + value.String() + ")"
+	case *big.Rat:
+		return "Val.Lit (Lit.Float " + value.String() + ")"
+	case string:
+		return "Val.Lit (Lit.String \"" + value + "\")"
 	default:
-		return "unknown"
+		return "TODO-unknown-constant"
 	}
 }
 
@@ -345,7 +369,7 @@ func valueToCoq(packageToTranslate string, value ssa.Value) string {
 
 	switch value := value.(type) {
 	case *ssa.Const:
-		return "TODO_constant"
+		return "(" + constToCoq(value) + ")"
 	case *ssa.Function:
 		return functionNameToCoq(packageToTranslate, value)
 	case *ssa.Builtin, *ssa.Parameter:
@@ -682,7 +706,7 @@ func functionToCoq(
 		if i_param != 0 {
 			buffer.WriteString("; ")
 		}
-		buffer.WriteString(param.Name())
+		buffer.WriteString(escapeName(param.Name()))
 	}
 	buffer.WriteString("] =>\n")
 
@@ -720,7 +744,7 @@ func functionToCoq(
 func main() {
 	packageToTranslate := os.Args[1]
 
-	// Load, parse, and type-check the initial packages.
+	// Load, parse, and type-check the input package.
 	cfg := &packages.Config{Mode: packages.LoadSyntax}
 	initial, err := packages.Load(cfg, packageToTranslate)
 	if err != nil {
@@ -735,8 +759,7 @@ func main() {
 	}
 
 	// Create SSA packages for all well-typed packages.
-	prog, pkgs := ssautil.Packages(initial, 0)
-	_ = prog
+	_, pkgs := ssautil.Packages(initial, 0)
 
 	// Build SSA code for the well-typed initial package.
 	pkgs[0].Build()

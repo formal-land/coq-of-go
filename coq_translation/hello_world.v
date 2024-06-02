@@ -121,14 +121,16 @@ Module Instr.
 	Parameter UnOp : string -> Val.t -> M Val.t.
 End Instr.
 
-Parameter TODO_constant : Val.t.
+(* Parameter TODO_constant : Val.t.
 
-Parameter TODO_method : Function.t.
+Parameter TODO_method : Function.t. *)
 
-Parameter len : Function.t.
+(* Parameter len : Function.t.
 
 Module fmt.
   Parameter init : Function.t.
+
+  Parameter Println : Function.t.
 
   Parameter Sprintf : Function.t.
 End fmt.
@@ -185,7 +187,7 @@ Module unicode.
   Module utf8.
     Parameter init : Function.t.
   End utf8.
-End unicode.
+End unicode. *)
 
 Local Unset Guard Checking.
 (** ** Constants *)
@@ -211,8 +213,8 @@ CoFixpoint Main (α : list Val.t) : M (list Val.t) :=
   | [] =>
     M.Thunk (M.EvalBody [(0,
       let* "t0" := Instr.Alloc (* varargs *) Alloc.Heap "*[1]any" in
-      let* "t1" := Instr.IndexAddr (Register.read "t0") TODO_constant in
-      let* "t2" := Instr.MakeInterface TODO_constant in
+      let* "t1" := Instr.IndexAddr (Register.read "t0") (Val.Lit (Lit.Int 0)) in
+      let* "t2" := Instr.MakeInterface (Val.Lit (Lit.String "Hello, World!")) in
       do* Instr.Store (Register.read "t1") (Register.read "t2") in
       let* "t3" := Instr.Slice (Register.read "t0") None None in
       let* "t4" := Instr.Call (CallKind.Function (fmt.Println [(Register.read "t3")])) in
@@ -230,7 +232,7 @@ with init (α : list Val.t) : M (list Val.t) :=
       Instr.If (Register.read "t0") 2 1
     );
     (1,
-      do* Instr.Store (Register.read "init$guard") TODO_constant in
+      do* Instr.Store (Register.read "init$guard") (Val.Lit (Lit.Bool true)) in
       let* "t1" := Instr.Call (CallKind.Function (fmt.init [])) in
       Instr.Jump 2
     );
